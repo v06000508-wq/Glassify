@@ -22,6 +22,7 @@
       "min_glassify": "0.1.1",
       "min_exteragram": "12.5.1",
       "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/profile_cover/1.0/extension.py",
+      "commit": "a9a973c2fc1de6d1368d79a376307f1898581287",
       "sha256": "c2817534f8cea7d62ffd0273c58151482b69560845b6a9fb9c78a57a69712c81"
     }
   ]
