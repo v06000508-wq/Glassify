@@ -4,8 +4,8 @@
   "extensions": [
     {
       "id": "extension_diagnostics",
-      "name": "Extension Diagnostics",
-      "description": "A no-op test module used to verify Glassify extension download, integrity checking, loading and unloading.",
+      "name": "Диагностика расширений",
+      "description": "Тестовое расширение без визуальных изменений для проверки загрузки, SHA-256, включения, выключения и удаления модулей.",
       "version": "1.0.0",
       "api": 1,
       "min_glassify": "0.1.1",
