@@ -17,13 +17,13 @@
       "id": "profile_cover",
       "name": "Profile Cover",
       "description": "Профиль пользователя в стиле iOS: крупное фото, плавающая навигация, имя и статус поверх обложки и нижняя панель действий.",
-      "version": "1.0",
+      "version": "1.1",
       "api": 1,
       "min_glassify": "0.1.1",
       "min_exteragram": "12.5.1",
-      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/profile_cover/1.0/extension.py",
-      "commit": "a9a973c2fc1de6d1368d79a376307f1898581287",
-      "sha256": "c2817534f8cea7d62ffd0273c58151482b69560845b6a9fb9c78a57a69712c81"
+      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/profile_cover/1.1/extension.py",
+      "commit": "4aca2ee18b6272a682e44e0a293ebd50cad7089f",
+      "sha256": "9807497f75abd95a64a482c18c47b926e501f923ed2d954a2fe2ee4e019f21e0"
     }
   ]
 }
