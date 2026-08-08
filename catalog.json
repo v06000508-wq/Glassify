@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "generated_by": "Glassify",
+  "extensions": [
+    {
+      "id": "extension_diagnostics",
+      "name": "Extension Diagnostics",
+      "description": "A no-op test module used to verify Glassify extension download, integrity checking, loading and unloading.",
+      "version": "1.0.0",
+      "api": 1,
+      "min_glassify": "0.1.1",
+      "min_exteragram": "12.5.1",
+      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/extension_diagnostics/1.0.0/extension.py",
+      "sha256": "b51ed28e1b5fe2c6bedc0bc4c1b04dff537e44e467d61f8ec724187513e3ce40"
+    }
+  ]
+}
