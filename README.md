@@ -14,6 +14,10 @@ extensions/
       extension.py
 ```
 
+## Version format
+
+Glassify extensions use a two-part version format such as `1.0`, `1.1`, `2.0`.
+
 ## Extension contract
 
 Each extension exports metadata and optional lifecycle callbacks:
@@ -22,7 +26,7 @@ Each extension exports metadata and optional lifecycle callbacks:
 GLASSIFY_EXTENSION = {
     "id": "example",
     "name": "Example",
-    "version": "1.0.0",
+    "version": "1.0",
     "api": 1,
 }
 
