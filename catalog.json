@@ -6,12 +6,12 @@
       "id": "extension_diagnostics",
       "name": "Диагностика расширений",
       "description": "Тестовое расширение без визуальных изменений для проверки загрузки, SHA-256, включения, выключения и удаления модулей.",
-      "version": "1.0.0",
+      "version": "1.0",
       "api": 1,
       "min_glassify": "0.1.1",
       "min_exteragram": "12.5.1",
-      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/extension_diagnostics/1.0.0/extension.py",
-      "sha256": "b51ed28e1b5fe2c6bedc0bc4c1b04dff537e44e467d61f8ec724187513e3ce40"
+      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/extension_diagnostics/1.0/extension.py",
+      "sha256": "55e67a54c3a7b02eef4b2bf3ae3352c3739c1cddcd3a1f0e570f299e20523b06"
     }
   ]
 }
