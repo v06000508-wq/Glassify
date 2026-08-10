@@ -11,7 +11,7 @@
       "min_glassify": "0.1.3",
       "min_exteragram": "12.5.1",
       "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_header/1.0/extension.py",
-      "preview": {
+      "preview_v2": {
         "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_header/1.0/preview.webp",
         "sha256": "e0f4084eb5683093121a5bc07956ed9001c9f15c026e13473fa40b24940bacf7"
       },
