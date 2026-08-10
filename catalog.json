@@ -23,14 +23,14 @@
       "id": "liquidglass_plus",
       "name": "LiquidGlass+",
       "description": "Пять заметно разных материалов Blur3, отдельные внутреннее свечение и глубина в компактном интерфейсе.",
-      "version": "1.1",
+      "version": "1.2",
       "api": 3,
       "min_glassify": "0.1.8",
       "min_exteragram": "12.5.1",
-      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/liquidglass_plus/1.1/extension.py",
-      "sha256": "99083b88adb9eb1a8405045766da6cab2684a0a981d97938c51e9b1f44b065a4",
-      "commit": "fc364580a65c385a0ba96fd7fdf0e3dce6f8bc19",
-      "blob_sha": "7d6e3aaf987baecb3c16d9ece739084d8985ce71"
+      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/liquidglass_plus/1.2/extension.py",
+      "sha256": "bd6d711a601c19e04f9824b9363a7c859f58d52a7ebec6314c4ae57f305ec211",
+      "commit": "f5f81a0463f18060074a32ec5b71d3e3f8d1033c",
+      "blob_sha": "f9758dea42a1183d494286a041100e5848311b92"
     }
   ]
 }
