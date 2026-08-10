@@ -20,7 +20,9 @@ Glassify extensions use a two-part version format such as `1.0`, `1.1`, `2.0`.
 
 ## Extension contract
 
-Each extension exports metadata and optional lifecycle callbacks:
+Each extension exports metadata and optional lifecycle callbacks. Extensions
+declare the Glassify API version they require; API 2 adds tracked UI helpers
+for modular visual features without exposing the core object:
 
 ```python
 GLASSIFY_EXTENSION = {
@@ -40,6 +42,12 @@ def on_unload(api):
 ```
 
 Glassify verifies the SHA-256 hash from `catalog.json` before loading downloaded code.
+
+## Available extensions
+
+- `ios_header` 1.0 — moves the experimental centered iOS chat header out of
+  Glassify Core. It owns its hooks and view snapshots, follows the core glass
+  strength, and fully restores the stock header when disabled or unloaded.
 
 ## Security model
 
