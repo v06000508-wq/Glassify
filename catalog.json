@@ -1,5 +1,19 @@
 {
   "schema": 1,
   "generated_by": "Glassify",
-  "extensions": []
+  "extensions": [
+    {
+      "id": "ios_header",
+      "name": "iOS Header",
+      "description": "Компактная iOS-шапка чата с нативным Liquid Glass, центрированным заголовком и аватаром справа.",
+      "version": "1.0",
+      "api": 2,
+      "min_glassify": "0.1.3",
+      "min_exteragram": "12.5.1",
+      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_header/1.0/extension.py",
+      "sha256": "0768e698fe724f4eb0cdcb9d589c735a540ea6111320196e1ac6f9c231e9e866",
+      "commit": "d40bab3ca758df0d360f75d83e91926b24cf0148",
+      "blob_sha": "5efe2efb8f5e261bcf7f959f0a413b0fcddac19a"
+    }
+  ]
 }
