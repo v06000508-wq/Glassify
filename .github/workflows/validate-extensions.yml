@@ -1,0 +1,115 @@
+name: Validate Glassify extensions
+
+on:
+  pull_request:
+    paths:
+      - 'catalog.json'
+      - 'extensions/**'
+      - '.github/workflows/validate-extensions.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'catalog.json'
+      - 'extensions/**'
+      - '.github/workflows/validate-extensions.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate catalog, syntax and integrity
+        shell: python
+        run: |
+          import ast
+          import hashlib
+          import json
+          import re
+          import subprocess
+          from pathlib import Path
+          from urllib.parse import urlparse
+
+          ROOT = Path('.')
+          catalog = json.loads(Path('catalog.json').read_text(encoding='utf-8'))
+          assert catalog.get('schema') == 1, 'catalog schema must be 1'
+          extensions = catalog.get('extensions')
+          assert isinstance(extensions, list), 'extensions must be a list'
+
+          ids = set()
+          version_re = re.compile(r'^\d+\.\d+(?:\.\d+)?$')
+          sha_re = re.compile(r'^[0-9a-f]{64}$')
+          blob_re = re.compile(r'^[0-9a-f]{40}$')
+
+          def version_tuple(value):
+              return tuple(int(part) for part in str(value).split('.'))
+
+          def local_path(raw_url):
+              parsed = urlparse(raw_url)
+              parts = parsed.path.lstrip('/').split('/')
+              assert parsed.scheme == 'https', f'HTTPS required: {raw_url}'
+              assert parsed.netloc == 'raw.githubusercontent.com', f'raw GitHub URL required: {raw_url}'
+              assert len(parts) >= 4, f'invalid raw URL: {raw_url}'
+              owner, repo, ref = parts[:3]
+              assert owner == 'v06000508-wq' and repo == 'Glassify', f'foreign repository: {raw_url}'
+              assert ref == 'main', f'catalog URL must point to main: {raw_url}'
+              return Path(*parts[3:])
+
+          def sha256(path):
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+
+          for ext in extensions:
+              ext_id = ext['id']
+              assert ext_id not in ids, f'duplicate extension id: {ext_id}'
+              ids.add(ext_id)
+              assert re.fullmatch(r'[a-z0-9_]{2,48}', ext_id), f'invalid extension id: {ext_id}'
+              assert version_re.fullmatch(str(ext['version'])), f'invalid version for {ext_id}'
+              assert version_tuple(ext['min_glassify']) >= (0, 2, 0), f'{ext_id} must require Glassify 0.2.0+'
+              assert int(ext['api']) in (1, 2, 3), f'unsupported API for {ext_id}'
+
+              path = local_path(ext['file'])
+              assert path.is_file(), f'missing extension file: {path}'
+              expected_sha = ext['sha256']
+              assert sha_re.fullmatch(expected_sha), f'invalid sha256 for {ext_id}'
+              assert sha256(path) == expected_sha, f'SHA-256 mismatch for {ext_id}'
+
+              source = path.read_text(encoding='utf-8')
+              tree = ast.parse(source, filename=str(path))
+              compile(tree, str(path), 'exec')
+
+              metadata = None
+              for node in tree.body:
+                  if isinstance(node, ast.Assign):
+                      for target in node.targets:
+                          if isinstance(target, ast.Name) and target.id == 'GLASSIFY_EXTENSION':
+                              metadata = ast.literal_eval(node.value)
+              assert isinstance(metadata, dict), f'missing GLASSIFY_EXTENSION in {ext_id}'
+              assert metadata.get('id') == ext_id, f'metadata id mismatch for {ext_id}'
+              assert str(metadata.get('version')) == str(ext['version']), f'metadata version mismatch for {ext_id}'
+              assert int(metadata.get('api')) == int(ext['api']), f'metadata api mismatch for {ext_id}'
+
+              blob_sha = ext.get('blob_sha', '')
+              commit = ext.get('commit', '')
+              assert blob_re.fullmatch(blob_sha), f'invalid blob_sha for {ext_id}'
+              assert blob_re.fullmatch(commit), f'invalid commit for {ext_id}'
+              current_blob = subprocess.check_output(['git', 'hash-object', str(path)], text=True).strip()
+              assert current_blob == blob_sha, f'blob_sha mismatch for {ext_id}'
+              committed = subprocess.check_output(['git', 'ls-tree', commit, '--', str(path)], text=True).strip().split()
+              assert len(committed) >= 3 and committed[2] == blob_sha, f'pinned commit/blob mismatch for {ext_id}'
+
+              preview = ext.get('preview')
+              if preview:
+                  preview_path = local_path(preview['file'])
+                  assert preview_path.is_file(), f'missing preview: {preview_path}'
+                  assert sha_re.fullmatch(preview['sha256']), f'invalid preview sha256 for {ext_id}'
+                  assert sha256(preview_path) == preview['sha256'], f'preview SHA-256 mismatch for {ext_id}'
+
+              print(f'OK: {ext_id} {ext["version"]} (API {ext["api"]})')
+
+          print(f'Validated {len(extensions)} extension(s).')
