@@ -43,9 +43,10 @@ def on_unload(api):
 ```
 
 Glassify verifies the SHA-256 hash from `catalog.json` before loading downloaded code.
-Optional store previews are declared as a `preview` object with `file` and
-`sha256` fields. Core downloads them only when the extension detail page opens,
-verifies the hash, and keeps a local cache.
+Optional store previews are declared as a `preview_v2` object with `file` and
+`sha256` fields. Glassify 0.1.6+ downloads them only when the extension detail
+page opens, verifies the hash, and keeps a local cache. Older cores safely ignore
+the field.
 
 ## Available extensions
 
