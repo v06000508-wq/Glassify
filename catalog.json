@@ -39,15 +39,15 @@
     {
       "id": "glass_action_bar",
       "name": "Glass Action Bar",
-      "description": "Компактный Liquid Glass для обычных ActionBar: пилюля точно по ширине заголовка, без центрального стекла на экранах без названия.",
-      "version": "1.1",
+      "description": "Аккуратные Liquid Glass шапки для Аккаунта и всех основных настроек: динамическая пилюля по тексту, отдельные круглые Back и action-кнопки, без пустого центрального стекла.",
+      "version": "1.2",
       "api": 3,
       "min_glassify": "0.1.10",
       "min_exteragram": "12.5.1",
-      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/glass_action_bar/1.1/extension.py",
-      "sha256": "98f73bedf4a9e1057d04dd3543b6cc5e6eff4597f8dfd16e03203d839a347263",
-      "commit": "f7303e9a8ca7bc987dffbcdaf8a6c9cab1f4168e",
-      "blob_sha": "bc69d812bde577e25ab6d46bffd0a72a41cc3c67"
+      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/glass_action_bar/1.2/extension.py",
+      "sha256": "21e6b4b8b2ecc0421af28871f90355b2dd1ddfc8c4310882ba4673da96a35a24",
+      "commit": "e624ffdcb77b527e7c75a03227530aadf759fd4e",
+      "blob_sha": "f2acfa65467572deb3fef75d971869bf98bca826"
     }
   ]
 }
