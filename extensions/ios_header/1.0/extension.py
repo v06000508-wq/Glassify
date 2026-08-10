@@ -26,6 +26,12 @@ def _class(name: str):
     return _API.find_class(name)
 
 
+def _identity(obj: Any) -> int:
+    if _API is None:
+        return 0
+    return _API.identity(obj)
+
+
 def _note_suppressed(exc: Any):
     runtime = _RUNTIME
     if runtime is not None:
@@ -1203,4 +1209,3 @@ def on_unload(api):
     _RUNTIME = None
     _API = None
     api.log("iOS Header unloaded")
-
