@@ -22,19 +22,19 @@
     {
       "id": "liquidglass_plus",
       "name": "LiquidGlass+",
-      "description": "Пять заметно разных материалов Blur3, отдельные внутреннее свечение и глубина в компактном интерфейсе.",
-      "version": "1.2",
+      "description": "Пять заметно разных материалов Blur3, отдельные внутреннее свечение и глубина. Верхнее размытие шапки Glassify всегда остаётся Frosted.",
+      "version": "1.3",
       "api": 3,
-      "min_glassify": "0.1.8",
+      "min_glassify": "0.1.10",
       "min_exteragram": "12.5.1",
-      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/liquidglass_plus/1.2/extension.py",
+      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/liquidglass_plus/1.3/extension.py",
       "preview": {
         "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/liquidglass_plus/1.2/preview.webp",
         "sha256": "e8f4e155a1a734ddef852dde505775a818f718b175347124e2789a0a374e8340"
       },
-      "sha256": "bd6d711a601c19e04f9824b9363a7c859f58d52a7ebec6314c4ae57f305ec211",
-      "commit": "f5f81a0463f18060074a32ec5b71d3e3f8d1033c",
-      "blob_sha": "f9758dea42a1183d494286a041100e5848311b92"
+      "sha256": "0db728c9ed2ec79ca57cf63b5692a26ef894a4a14e6f1641a36548dc31a46c0f",
+      "commit": "227bf9a8e7a72fb92896f7dcf9e854116060a03e",
+      "blob_sha": "f30bc04d9e1171ebd30e3ee4ee925ff0fc91c9b8"
     }
   ]
 }
