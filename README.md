@@ -22,8 +22,9 @@ Glassify extensions use a two-part version format such as `1.0`, `1.1`, `2.0`.
 ## Extension contract
 
 Each extension exports metadata and optional lifecycle callbacks. Extensions
-declare the Glassify API version they require; API 2 adds tracked UI helpers
-for modular visual features without exposing the core object:
+declare the Glassify API version they require. API 2 adds tracked UI helpers;
+API 3 adds declarative native settings and validated Blur3 material profiles
+without exposing the core object:
 
 ```python
 GLASSIFY_EXTENSION = {
@@ -52,6 +53,9 @@ verifies the hash, and keeps a local cache.
 - `ios_header` 1.0 — moves the experimental centered iOS chat header out of
   Glassify Core. It owns its hooks and view snapshots, follows the core glass
   strength, and fully restores the stock header when disabled or unloaded.
+- `liquidglass_plus` 1.0 — adds five simple surface styles, adjustable inner
+  glow and depth. Its native settings are rendered by Glassify Core, and the
+  original Blur3 material is restored when the extension is disabled.
 
 ## Security model
 
