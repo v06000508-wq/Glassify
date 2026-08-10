@@ -29,8 +29,8 @@
       "min_exteragram": "12.5.1",
       "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/liquidglass_plus/1.2/extension.py",
       "preview": {
-        "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/liquidglass_plus/1.2/preview.webp",
-        "sha256": "e8f4e155a1a734ddef852dde505775a818f718b175347124e2789a0a374e8340"
+        "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/agent/liquidglass-preview-cache-fix/extensions/liquidglass_plus/1.2/preview.png",
+        "sha256": "9d87fbc7f0b49f5533c7bd00dd1c8ee1c11f6c7584f9fa3f74f977226a86c380"
       },
       "sha256": "bd6d711a601c19e04f9824b9363a7c859f58d52a7ebec6314c4ae57f305ec211",
       "commit": "f5f81a0463f18060074a32ec5b71d3e3f8d1033c",
