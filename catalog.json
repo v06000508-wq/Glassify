@@ -35,19 +35,6 @@
       "sha256": "0db728c9ed2ec79ca57cf63b5692a26ef894a4a14e6f1641a36548dc31a46c0f",
       "commit": "227bf9a8e7a72fb92896f7dcf9e854116060a03e",
       "blob_sha": "f30bc04d9e1171ebd30e3ee4ee925ff0fc91c9b8"
-    },
-    {
-      "id": "glass_action_bar",
-      "name": "Glass Action Bar",
-      "description": "Аккуратные Liquid Glass шапки для Аккаунта и всех основных настроек: динамическая пилюля по тексту, отдельные круглые Back и action-кнопки, без пустого центрального стекла.",
-      "version": "1.2",
-      "api": 3,
-      "min_glassify": "0.1.10",
-      "min_exteragram": "12.5.1",
-      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/glass_action_bar/1.2/extension.py",
-      "sha256": "b6aa9ccd373d20eff402792d4ab5899b2bd925fbd799e4edd68e97d60ffcdbac",
-      "commit": "e624ffdcb77b527e7c75a03227530aadf759fd4e",
-      "blob_sha": "f2acfa65467572deb3fef75d971869bf98bca826"
     }
   ]
 }
