@@ -1,0 +1,287 @@
+name: Release iOS Header 1.2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/release-ios-header-1-2.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build iOS Header 1.2
+        shell: bash
+        run: |
+          python - <<'PY'
+          import ast
+          import shutil
+          from pathlib import Path
+
+          old_path = Path('extensions/ios_header/1.1/extension.py')
+          new_dir = Path('extensions/ios_header/1.2')
+          new_dir.mkdir(parents=True, exist_ok=True)
+          src = old_path.read_text(encoding='utf-8')
+
+          src = src.replace('"version": "1.1"', '"version": "1.2"', 1)
+          src = src.replace('api.log("iOS Header 1.1 loaded")', 'api.log("iOS Header 1.2 loaded")', 1)
+
+          old_extent = '''def _ios_header_text_extent(view: Any) -> int:
+              """Measure the actual rendered text, not the View/container width."""
+              if view is None:
+                  return 0
+
+              text = None
+          '''
+          new_extent = '''def _ios_header_text_extent(view: Any) -> int:
+              """Measure the complete rendered row, including Telegram side drawables."""
+              if view is None:
+                  return 0
+
+              # Modern SimpleTextView exposes a stable content measurement that
+              # already accounts for its real side drawables. Prefer it over a
+              # stale layout/cache width or a guessed icon allowance.
+              try:
+                  exact = _ios_header_int(view.getExactWidth())
+                  if exact > 0:
+                      return exact
+              except Exception as _suppressed_exc:
+                  _note_suppressed(_suppressed_exc)
+
+              text = None
+          '''
+          if old_extent not in src:
+              raise RuntimeError('text extent anchor not found')
+          src = src.replace(old_extent, new_extent, 1)
+
+          old_getters = '''            "pivot_y": "getPivotY",
+                      "gravity": "getGravity",
+                  }
+          '''
+          new_getters = '''            "pivot_y": "getPivotY",
+                      "gravity": "getGravity",
+                      "padding_left": "getPaddingLeft",
+                      "padding_top": "getPaddingTop",
+                      "padding_right": "getPaddingRight",
+                      "padding_bottom": "getPaddingBottom",
+                  }
+          '''
+          if old_getters not in src:
+              raise RuntimeError('snapshot getter anchor not found')
+          src = src.replace(old_getters, new_getters, 1)
+
+          restore_anchor = '''        if "scrolling" in snapshot:
+                      try:
+                          view.setScrolling(bool(snapshot["scrolling"]))
+                      except Exception as _suppressed_exc:
+                          _note_suppressed(_suppressed_exc)
+                  try:
+                      view.requestLayout()
+          '''
+          restore_replacement = '''        if "scrolling" in snapshot:
+                      try:
+                          view.setScrolling(bool(snapshot["scrolling"]))
+                      except Exception as _suppressed_exc:
+                          _note_suppressed(_suppressed_exc)
+                  if any(
+                      key in snapshot
+                      for key in (
+                          "padding_left",
+                          "padding_top",
+                          "padding_right",
+                          "padding_bottom",
+                      )
+                  ):
+                      try:
+                          view.setPadding(
+                              int(snapshot.get("padding_left", view.getPaddingLeft())),
+                              int(snapshot.get("padding_top", view.getPaddingTop())),
+                              int(snapshot.get("padding_right", view.getPaddingRight())),
+                              int(snapshot.get("padding_bottom", view.getPaddingBottom())),
+                          )
+                      except Exception as exc:
+                          self._log_suppressed("restore iOS header padding", exc)
+                  try:
+                      view.requestLayout()
+          '''
+          if restore_anchor not in src:
+              raise RuntimeError('restore padding anchor not found')
+          src = src.replace(restore_anchor, restore_replacement, 1)
+
+          start = src.index('            def place_text(view: Any, y: int):')
+          end = src.index(
+              '            if title is not None and title.getVisibility() != View.GONE:',
+              start,
+          )
+          place_text = '''            def place_text(view: Any, y: int):
+                          if view is None or view.getVisibility() == View.GONE:
+                              return
+
+                          # Telegram creates subtitleTextView with a 10dp right padding
+                          # and gradient clipping. Re-measuring that same view as a
+                          # centered compact row makes its internal drawing area
+                          # asymmetric and is what intermittently cuts the left edge.
+                          # Keep vertical padding, but own horizontal geometry here.
+                          try:
+                              padding_top = _ios_header_int(view.getPaddingTop())
+                              padding_bottom = _ios_header_int(view.getPaddingBottom())
+                              if (
+                                  _ios_header_int(view.getPaddingLeft()) != 0
+                                  or _ios_header_int(view.getPaddingRight()) != 0
+                              ):
+                                  view.setPadding(0, padding_top, 0, padding_bottom)
+                          except Exception as _suppressed_exc:
+                              _note_suppressed(_suppressed_exc)
+
+                          # Native header transitions may leave a temporary X
+                          # translation on the text view. The compact island owns X.
+                          try:
+                              view.setTranslationX(0.0)
+                          except Exception as _suppressed_exc:
+                              _note_suppressed(_suppressed_exc)
+
+                          row_width = _ios_header_text_extent(view)
+                          safety = self.plugin.dp(4)
+                          fits = (
+                              row_width + safety <= text_width
+                              if row_width > 0
+                              else True
+                          )
+
+                          # Do not ask SimpleTextView to center its own layout. Its
+                          # center calculation is based on a drawable/padding-reduced
+                          # width and is later clipped again in onDraw(). Instead,
+                          # center the actual View bounds and keep its content LEFT.
+                          row_left = text_left
+                          row_right = text_right
+                          row_box_width = text_width
+                          if fits and row_width > 0:
+                              row_box_width = min(
+                                  text_width,
+                                  max(self.plugin.dp(24), row_width + safety),
+                              )
+                              row_left = island_left + (island_width - row_box_width) // 2
+                              row_left = max(
+                                  text_left,
+                                  min(row_left, text_right - row_box_width),
+                              )
+                              row_right = row_left + row_box_width
+
+                          try:
+                              view.setGravity(Gravity.LEFT | Gravity.CENTER_VERTICAL)
+                          except Exception as _suppressed_exc:
+                              _note_suppressed(_suppressed_exc)
+                          _ios_header_set_marquee(
+                              view,
+                              not fits,
+                              self.plugin.dp(10),
+                          )
+
+                          try:
+                              view.measure(
+                                  MeasureSpec.makeMeasureSpec(
+                                      int(row_box_width),
+                                      MeasureSpec.EXACTLY,
+                                  ),
+                                  MeasureSpec.makeMeasureSpec(
+                                      int(height),
+                                      MeasureSpec.AT_MOST,
+                                  ),
+                              )
+                          except Exception as _suppressed_exc:
+                              _note_suppressed(_suppressed_exc)
+
+                          measured_h = _ios_header_int(view.getMeasuredHeight())
+                          view.layout(
+                              int(row_left),
+                              int(y),
+                              int(row_right),
+                              int(y + measured_h),
+                          )
+
+          '''
+          src = src[:start] + place_text + src[end:]
+
+          tree = ast.parse(src, filename=str(new_dir / 'extension.py'))
+          compile(tree, str(new_dir / 'extension.py'), 'exec')
+          (new_dir / 'extension.py').write_text(src, encoding='utf-8')
+          shutil.copyfile(
+              'extensions/ios_header/1.1/preview.webp',
+              new_dir / 'preview.webp',
+          )
+          print('Built iOS Header 1.2')
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add extensions/ios_header/1.2/extension.py extensions/ios_header/1.2/preview.webp
+          git commit -m "Release iOS Header 1.2"
+
+      - name: Publish catalog entry and validate
+        shell: bash
+        run: |
+          release_commit="$(git rev-parse HEAD)"
+          python - "$release_commit" <<'PY'
+          import ast
+          import hashlib
+          import json
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          release_commit = sys.argv[1]
+          ext_path = Path('extensions/ios_header/1.2/extension.py')
+          preview_path = Path('extensions/ios_header/1.2/preview.webp')
+          blob_sha = subprocess.check_output(
+              ['git', 'hash-object', str(ext_path)], text=True
+          ).strip()
+          digest = hashlib.sha256(ext_path.read_bytes()).hexdigest()
+          preview_digest = hashlib.sha256(preview_path.read_bytes()).hexdigest()
+
+          catalog_path = Path('catalog.json')
+          catalog = json.loads(catalog_path.read_text(encoding='utf-8'))
+          entry = next(item for item in catalog['extensions'] if item['id'] == 'ios_header')
+          entry['version'] = '1.2'
+          entry['file'] = 'https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_header/1.2/extension.py'
+          entry['preview']['file'] = 'https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_header/1.2/preview.webp'
+          entry['preview']['sha256'] = preview_digest
+          entry['sha256'] = digest
+          entry['commit'] = release_commit
+          entry['blob_sha'] = blob_sha
+          catalog_path.write_text(
+              json.dumps(catalog, ensure_ascii=False, indent=2) + '\n',
+              encoding='utf-8',
+          )
+
+          source = ext_path.read_text(encoding='utf-8')
+          tree = ast.parse(source, filename=str(ext_path))
+          compile(tree, str(ext_path), 'exec')
+          metadata = None
+          for node in tree.body:
+              if isinstance(node, ast.Assign):
+                  for target in node.targets:
+                      if isinstance(target, ast.Name) and target.id == 'GLASSIFY_EXTENSION':
+                          metadata = ast.literal_eval(node.value)
+          assert metadata['id'] == 'ios_header'
+          assert metadata['version'] == '1.2'
+          assert metadata['api'] == 2
+          assert hashlib.sha256(ext_path.read_bytes()).hexdigest() == entry['sha256']
+          assert hashlib.sha256(preview_path.read_bytes()).hexdigest() == entry['preview']['sha256']
+          pinned = subprocess.check_output(
+              ['git', 'ls-tree', release_commit, '--', str(ext_path)], text=True
+          ).strip().split()
+          assert len(pinned) >= 3 and pinned[2] == blob_sha
+          print('Validated iOS Header 1.2 catalog metadata and pinned blob')
+          PY
+
+          git add catalog.json
+          git rm .github/workflows/release-ios-header-1-2.yml
+          git commit -m "Publish iOS Header 1.2 in catalog"
+          git push origin HEAD:main
