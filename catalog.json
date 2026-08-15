@@ -6,18 +6,18 @@
       "id": "ios_header",
       "name": "iOS Header",
       "description": "Компактная iOS-шапка чата с нативным Liquid Glass, центрированным заголовком и аватаром справа.",
-      "version": "1.1",
+      "version": "1.2",
       "api": 2,
       "min_glassify": "0.2.1",
       "min_exteragram": "12.9.0",
-      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_header/1.1/extension.py",
+      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_header/1.2/extension.py",
       "preview": {
-        "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_header/1.1/preview.webp",
+        "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_header/1.2/preview.webp",
         "sha256": "e0f4084eb5683093121a5bc07956ed9001c9f15c026e13473fa40b24940bacf7"
       },
-      "sha256": "6b0e021be5c8c2586c536dfa5e616921f10fe2200f95b7f34d8fcf2c56c02a96",
-      "commit": "9041281afca1a525574720da57b25b7cf156393c",
-      "blob_sha": "74e5541a6aeabf37cfc39f2bb022a2af70b6bba4"
+      "sha256": "442c0b55723d5604c6715ff6abac3ba125006d0a9d1904d279fff82c11b5c255",
+      "commit": "35ef39402ef13cfb7db2e5cae9d87914354775dd",
+      "blob_sha": "293d97b1d75f753fcc81c6fd63320d12b3508c5b"
     },
     {
       "id": "liquidglass_plus",
