@@ -1,8 +1,8 @@
 # Glassify Extensions
 
-Remote extension catalog for Glassify 0.2.0+.
+Remote extension catalog for Glassify 0.2.1+.
 
-This repository stores optional Glassify extensions separately from the main exteraGram plugin. The extension system is disabled by default in Glassify 0.2.0. The catalog is refreshed only after the user explicitly enables extensions, and extension code is downloaded only after the user presses Install. Newly installed extensions remain disabled until the user enables them manually.
+This repository stores optional Glassify extensions separately from the main exteraGram plugin. The extension system is disabled by default. The catalog is refreshed only after the user explicitly enables extensions, and extension code is downloaded only after the user presses Install. Newly installed extensions remain disabled until the user enables them manually.
 
 ## Repository layout
 
@@ -44,14 +44,15 @@ Glassify verifies each downloaded extension against the SHA-256 hash declared in
 
 ## Available extensions
 
-- `ios_header` 1.0 — compact iOS-style chat header with native Liquid Glass, centered title/subtitle handling, avatar-aware layout and full stock-state restoration when disabled. Requires Glassify 0.2.0+.
-- `liquidglass_plus` 1.3 — five Blur3 surface materials (`Clear`, `Frosted`, `Crystal`, `Satin`, `Deep Glass`) with adjustable inner glow and depth. The top chat-header blur remains Frosted and is not changed by the selected surface type. Requires Glassify 0.2.0+.
+- `ios_header` 1.2 — compact iOS-style chat header with native Liquid Glass, centered title/subtitle handling, avatar-aware layout and full stock-state restoration when disabled. Requires Glassify 0.2.1+ and exteraGram 12.9.0+.
+- `liquidglass_plus` 1.3 — five Blur3 surface materials (`Clear`, `Frosted`, `Crystal`, `Satin`, `Deep Glass`) with adjustable inner glow and depth. The top chat-header blur remains Frosted and is not changed by the selected surface type. Requires Glassify 0.2.1+ and exteraGram 12.9.0+.
 
 ## Security model
 
-- The extension system is disabled by default in Glassify 0.2.0.
+- The extension system is disabled by default.
 - No catalog network request is started before the user enables extensions.
 - Extensions are never installed or enabled automatically.
+- Extension source code is downloaded only after the user presses Install.
 - Every downloaded extension must match the SHA-256 declared in the catalog.
 - Installed extension code is checked against its pinned Git blob before loading.
 - Installed extensions can be disabled or removed independently of Glassify Core.
