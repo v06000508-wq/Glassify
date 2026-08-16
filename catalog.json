@@ -40,18 +40,18 @@
       "id": "glass_date_chips",
       "name": "Glass Date Chips",
       "description": "Стеклянные floating-плашки дат в чате и разделителя непрочитанных сообщений.",
-      "version": "1.0",
+      "version": "1.1",
       "api": 3,
       "min_glassify": "0.3.0",
       "min_exteragram": "12.9.0",
-      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/glass_date_chips/1.0/extension.py",
+      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/glass_date_chips/1.1/extension.py",
       "preview": {
-        "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/glass_date_chips/1.0/preview_v2.webp",
-        "sha256": "56791bcdd2378ec3f6c3da46baa7e689be439111366927da67af590a06aeb2a1"
+        "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/glass_date_chips/1.1/preview_v3.webp",
+        "sha256": "d6584236c0d4d04480f136058b5942e3ced47727b1fb1961ba84292c56952afa"
       },
-      "sha256": "eacb0f2bab60d426ad8170043e92304825b30a534bd273aa1a54a19f5d247f81",
-      "commit": "7ebbd0cd7e7cdbf115c0e20428e81b2fd2a8ee23",
-      "blob_sha": "e2acf694b353f1f9f0252ee89949f5a2c061634e"
+      "sha256": "d91e07e5fc62de0c13454ad4efb66cb0855fb55c416f895f994f2a0fa9ce54cf",
+      "commit": "cb8ded3f4aec83360185b14b96edeb55172341fe",
+      "blob_sha": "f8396297fee0bb9b680f8be4832d0ac10a99f3e0"
     }
   ]
 }
