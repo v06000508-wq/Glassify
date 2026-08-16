@@ -46,8 +46,8 @@
       "min_exteragram": "12.9.0",
       "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/glass_date_chips/1.1/extension.py",
       "preview": {
-        "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/glass_date_chips/1.1/preview_v3.webp",
-        "sha256": "d6584236c0d4d04480f136058b5942e3ced47727b1fb1961ba84292c56952afa"
+        "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/glass_date_chips/1.1/preview.webp",
+        "sha256": "fbdf106254f01cc043b8286c3822e5955e73e03a0524bfe3dfcbe23df9947f93"
       },
       "sha256": "d91e07e5fc62de0c13454ad4efb66cb0855fb55c416f895f994f2a0fa9ce54cf",
       "commit": "cb8ded3f4aec83360185b14b96edeb55172341fe",
