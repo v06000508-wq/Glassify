@@ -23,8 +23,8 @@ _SETTINGS = [
         "icon": "msg_settings",
         "default": "on",
         "options": [
-  {"value": "on", "text": "Включено"},
-  {"value": "off", "text": "Выключено"},
+            {"value": "on", "text": "Включено"},
+            {"value": "off", "text": "Выключено"},
         ],
     },
     {
@@ -78,7 +78,7 @@ def on_unload(api):
     global _API, _DEX_HANDLE
     if _DEX_HANDLE is not None:
         try:
-  api.unload_embedded_dex(_DEX_HANDLE)
+            api.unload_embedded_dex(_DEX_HANDLE)
         finally:
-  _DEX_HANDLE = None
+            _DEX_HANDLE = None
     _API = None
