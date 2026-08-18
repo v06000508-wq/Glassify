@@ -71,7 +71,7 @@ jobs:
               assert re.fullmatch(r'[a-z0-9_]{2,48}', ext_id), f'invalid extension id: {ext_id}'
               assert version_re.fullmatch(str(ext['version'])), f'invalid version for {ext_id}'
               assert version_tuple(ext['min_glassify']) >= (0, 2, 0), f'{ext_id} must require Glassify 0.2.0+'
-              assert int(ext['api']) in (1, 2, 3), f'unsupported API for {ext_id}'
+              assert int(ext['api']) in (1, 2, 3, 4), f'unsupported API for {ext_id}'
 
               path = local_path(ext['file'])
               assert path.is_file(), f'missing extension file: {path}'
