@@ -52,6 +52,23 @@
       "sha256": "d91e07e5fc62de0c13454ad4efb66cb0855fb55c416f895f994f2a0fa9ce54cf",
       "commit": "cb8ded3f4aec83360185b14b96edeb55172341fe",
       "blob_sha": "f8396297fee0bb9b680f8be4832d0ac10a99f3e0"
+    },
+    {
+      "id": "ios_input",
+      "name": "iOS Input",
+      "description": "iOS-панель ввода для exteraGram на оригинальном DEX-модуле с безопасной загрузкой через Glassify.",
+      "version": "1.0",
+      "api": 4,
+      "min_glassify": "0.4.0",
+      "min_exteragram": "12.9.0",
+      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/extension.py",
+      "preview": {
+        "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/preview.webp",
+        "sha256": "077522b35ff972c9502603b9dc9e32868bc5b5289893cbb1af7f892da9ee6f83"
+      },
+      "sha256": "b52588e320d186a98887b9f4fa69d0b453a4c4b4da6b232e0c128ee369882951",
+      "commit": "ed088295d840f89d0412e92bdd3ccadc89847af4",
+      "blob_sha": "5db321358eee157cefe309ee4a3bb5b2dc12a5f6"
     }
   ]
 }
