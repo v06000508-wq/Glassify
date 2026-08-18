@@ -63,8 +63,8 @@
       "min_exteragram": "12.9.0",
       "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/extension.py",
       "preview": {
-        "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/preview.jpg",
-        "sha256": "cfa12da8ec52e6508f804adbcff7edebdbb4d16ad177b8612aacf650032c1f06"
+        "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/preview.webp",
+        "sha256": "077522b35ff972c9502603b9dc9e32868bc5b5289893cbb1af7f892da9ee6f83"
       },
       "sha256": "b52588e320d186a98887b9f4fa69d0b453a4c4b4da6b232e0c128ee369882951",
       "commit": "ed088295d840f89d0412e92bdd3ccadc89847af4",
