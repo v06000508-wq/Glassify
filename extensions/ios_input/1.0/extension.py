@@ -5,18 +5,26 @@ GLASSIFY_EXTENSION = {
     "api": 4,
 }
 
-_DEX_SHA256 = '4637973df7bd0b114ddc1d2dcc056554d58c2a9f3e9a00a4b6b50119928a9155'
+_DEX_SHA256 = "4637973df7bd0b114ddc1d2dcc056554d58c2a9f3e9a00a4b6b50119928a9155"
 _DEX_SIZE = 211492
-_MAIN_CLASS_NAME = 'com.swagaplugins.plugin.modulartweaks.module.ios_input_panel.ios_input_panel'
+_MAIN_CLASS_NAME = "com.swagaplugins.plugin.modulartweaks.module.ios_input_panel.ios_input_panel"
 _DEX_CHUNKS = [
-    "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload/00.b64",
-    "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload/01.b64",
-    "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload/02.b64",
-    "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload/03.b64",
-    "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload/04.b64",
-    "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload/05.b64",
-    "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload/06.b64",
-    "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload/07.b64",
+    'https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload/00.b64',
+    'https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload/01.b64',
+    'https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload/02.b64',
+    'https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload/03.b64',
+    'https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload_split/04_0.b64',
+    'https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload_split/04_1.b64',
+    'https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload_split/04_2.b64',
+    'https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload_split/04_3.b64',
+    'https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload_split/04_4.b64',
+    'https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload_split/05_0.b64',
+    'https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload_split/05_1.b64',
+    'https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload_split/05_2.b64',
+    'https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload_split/05_3.b64',
+    'https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload_split/05_4.b64',
+    'https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload/06.b64',
+    'https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_input/1.0/payload/07.b64',
 ]
 
 _API = None
@@ -58,11 +66,7 @@ def _timer_ring_get():
 def _timer_ring_set(enabled):
     if _API is None or _DEX_HANDLE is None:
         return
-    _API.call_embedded_dex(
-        _DEX_HANDLE,
-        "setTimerRingEnabled",
-        [bool(enabled)],
-    )
+    _API.call_embedded_dex(_DEX_HANDLE, "setTimerRingEnabled", [bool(enabled)])
 
 
 def _settings_changed(key, value):
@@ -80,8 +84,7 @@ def on_load(api):
         _MAIN_CLASS_NAME,
     )
     api.activate_embedded_dex(_DEX_HANDLE)
-    wanted = str(api.get_setting("timer_ring", "on")) != "off"
-    _timer_ring_set(wanted)
+    _timer_ring_set(str(api.get_setting("timer_ring", "on")) != "off")
     api.register_settings(_SETTINGS, _settings_changed)
     _log("loaded; timer ring=" + ("on" if _timer_ring_get() else "off"))
 
