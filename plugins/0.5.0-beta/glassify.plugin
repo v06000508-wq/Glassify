@@ -721,6 +721,21 @@ def _settings_palette(resources_provider: Any = None) -> Dict[str, int]:
     }
 
 
+def _fill_row_width(view: Any, context: Any, side_inset_dp: float = 24):
+    """Make a custom settings row as wide as the list.
+
+    The SDK hosts custom views with WRAP_CONTENT width, so without this the
+    rounded row card shrinks to the content (0.4.0 used the same approach).
+    """
+    try:
+        screen_width = int(context.getResources().getDisplayMetrics().widthPixels)
+        view.setMinimumWidth(
+            max(AndroidUtilities.dp(280), screen_width - AndroidUtilities.dp(side_inset_dp))
+        )
+    except Exception as exc:
+        _note_suppressed(exc)
+
+
 def _rounded_drawable(
     color: int,
     radius_dp: float,
@@ -882,12 +897,16 @@ def _style_strength_chip(chip: Dict[str, Any], selected: bool, palette: Dict[str
             drawable.setColor(int(palette["accent"]))
             drawable.setStroke(AndroidUtilities.dp(1), int(palette["accent"]))
             chip["label"].setTextColor(int(palette["on_accent"]))
-            chip["percent"].setTextColor(_with_alpha_color(palette["on_accent"], 0xCC))
+            if chip.get("percent") is not None:
+                chip["percent"].setTextColor(
+                    _with_alpha_color(palette["on_accent"], 0xCC)
+                )
         else:
             drawable.setColor(0x00000000)
             drawable.setStroke(AndroidUtilities.dp(1), int(palette["outline"]))
             chip["label"].setTextColor(int(palette["primary"]))
-            chip["percent"].setTextColor(int(palette["secondary"]))
+            if chip.get("percent") is not None:
+                chip["percent"].setTextColor(int(palette["secondary"]))
         chip["view"].setSelected(bool(selected))
     except Exception as exc:
         _note_suppressed(exc)
@@ -965,6 +984,7 @@ def _create_strength_view_impl(
     # The SeekBar extends into the side padding so its thumb is never clipped
     # at 1% or 100% while the track still lines up with the text above.
     outer.setClipToPadding(False)
+    _fill_row_width(outer, context)
 
     header = LinearLayout(context)
     header.setOrientation(LinearLayout.HORIZONTAL)
@@ -1016,9 +1036,23 @@ def _create_strength_view_impl(
         )
         progress_layers.setId(0, 0x01020000)  # android.R.id.background
         progress_layers.setId(1, 0x0102000D)  # android.R.id.progress
-        inset = AndroidUtilities.dp(20)
-        progress_layers.setLayerInset(0, 0, inset, 0, inset)
-        progress_layers.setLayerInset(1, 0, inset, 0, inset)
+        track_height = AndroidUtilities.dp(4)
+        try:
+            for layer in (0, 1):
+                progress_layers.setLayerGravity(
+                    layer, Gravity.CENTER_VERTICAL | Gravity.FILL_HORIZONTAL
+                )
+                progress_layers.setLayerHeight(layer, track_height)
+        except Exception as _layer_exc:
+            # Android < 6: fall back to fixed intrinsic heights.
+            _note_suppressed(_layer_exc)
+            inactive_track.setSize(0, track_height)
+            active_track.setSize(0, track_height)
+        try:
+            seek_bar.setMinHeight(track_height)
+            seek_bar.setMaxHeight(track_height)
+        except Exception as _height_exc:
+            _note_suppressed(_height_exc)
         seek_bar.setProgressDrawable(progress_layers)
 
         thumb = GradientDrawable()
@@ -1084,41 +1118,23 @@ def _create_strength_view_impl(
     chips_row.setOrientation(LinearLayout.HORIZONTAL)
     chips: List[Dict[str, Any]] = []
     for index, (label, value) in enumerate(GLASSIFY_STRENGTH_PRESETS):
-        chip_view = LinearLayout(context)
-        chip_view.setOrientation(LinearLayout.VERTICAL)
+        chip_view = TextView(context)
+        chip_view.setText(f"{value}%")
+        chip_view.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.0)
         chip_view.setGravity(Gravity.CENTER)
-        chip_view.setMinimumHeight(AndroidUtilities.dp(52))
-        chip_view.setPadding(
-            AndroidUtilities.dp(4),
-            AndroidUtilities.dp(6),
-            AndroidUtilities.dp(4),
-            AndroidUtilities.dp(6),
-        )
-        chip_view.setContentDescription(f"Пресет «{label}», {value} процентов")
-        drawable = _rounded_drawable(0x00000000, 14, palette["outline"])
+        chip_view.setSingleLine(True)
+        try:
+            chip_view.setTypeface(AndroidUtilities.bold())
+        except Exception as _suppressed_exc:
+            _note_suppressed(_suppressed_exc)
+        chip_view.setMinimumHeight(AndroidUtilities.dp(40))
+        chip_view.setContentDescription(f"{label}: {value} процентов")
+        drawable = _rounded_drawable(0x00000000, 20, palette["outline"])
         chip_view.setBackground(
-            _with_ripple(drawable, _with_alpha_color(palette["accent"], 0x33), 14)
+            _with_ripple(drawable, _with_alpha_color(palette["accent"], 0x33), 20)
         )
-        label_view = _settings_text(context, label, 13.0, palette["primary"], True)
-        label_view.setGravity(Gravity.CENTER)
-        label_view.setSingleLine(True)
-        percent_view = _settings_text(context, f"{value}%", 12.0, palette["secondary"])
-        percent_view.setGravity(Gravity.CENTER)
-        chip_view.addView(
-            label_view,
-            _linear_params(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            ),
-        )
-        chip_view.addView(
-            percent_view,
-            _linear_params(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                top_dp=1,
-            ),
-        )
+        label_view = chip_view
+        percent_view = None
         chip_params = _linear_params(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.0)
         if index > 0:
             chip_params.leftMargin = AndroidUtilities.dp(8)
@@ -1136,7 +1152,7 @@ def _create_strength_view_impl(
                 "percent": percent_view,
             }
         )
-    outer.addView(chips_row, _linear_params(top_dp=12))
+    outer.addView(chips_row, _linear_params(top_dp=10))
 
     reset_view = _settings_text(
         context,
@@ -1175,6 +1191,7 @@ def _create_glassify_header_view_impl(
 ):
     palette = _settings_palette(resources_provider)
     container = FrameLayout(context)
+    _fill_row_width(container, context)
 
     try:
         from org.telegram.ui.Components import LayoutHelper
@@ -1358,6 +1375,7 @@ def _create_native_warning_view_impl(
     )
 
     outer.addView(card, _linear_params())
+    _fill_row_width(outer, context)
     return outer
 
 
@@ -1544,6 +1562,7 @@ def _create_update_report_view_impl(
         outer.addView(view, _linear_params(top_dp=top))
         return view
 
+    _fill_row_width(outer, context)
     add_text(f"Glassify {_version_label()}", 21.0, palette["primary"], True)
     add_text(
         str(release.get("summary") or "Список изменений этой версии"),
@@ -5348,7 +5367,7 @@ class GlassifyPlugin(BasePlugin):
         )
 
     def _create_glass_settings(self) -> List[Any]:
-        items: List[Any] = [Header(text="Интенсивность")]
+        items: List[Any] = [Header(text="Liquid Glass")]
         try:
             items.append(Custom(factory=StrengthSliderFactory.instance.java))
         except Exception as exc:
