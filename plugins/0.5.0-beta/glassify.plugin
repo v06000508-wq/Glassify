@@ -421,7 +421,7 @@ def _draw_glassify_logo_overlay(view: Any, bitmap: Any) -> bool:
         return False
 
 
-def _apply_glassify_logo(view: Any, bitmap: Any) -> bool:
+def _apply_glassify_logo(view: Any, bitmap: Any, attempt: int = 0) -> bool:
     if view is None or bitmap is None:
         return False
 
@@ -431,6 +431,11 @@ def _apply_glassify_logo(view: Any, bitmap: Any) -> bool:
     # or tile half of the image.
     try:
         view.getImageReceiver()
+        is_backup_image_view = True
+    except Exception:
+        is_backup_image_view = False
+
+    if is_backup_image_view:
         if _draw_glassify_logo_overlay(view, bitmap):
             # The hook may run before RecyclerView completes layout. Re-apply
             # after layout so bounds always match the final measured icon.
@@ -444,8 +449,19 @@ def _apply_glassify_logo(view: Any, bitmap: Any) -> bool:
             except Exception as _suppressed_exc:
                 _note_suppressed(_suppressed_exc)
             return True
-    except Exception as _suppressed_exc:
-        _note_suppressed(_suppressed_exc)
+        # Not measured yet (width 0 on the first bind). Retry after layout
+        # instead of falling back to ImageReceiver, which crops the logo.
+        if attempt < 6 and _ACTIVE_PLUGIN is not None:
+            try:
+                run_on_ui_thread(
+                    lambda view=view, bitmap=bitmap, attempt=attempt: (
+                        _apply_glassify_logo(view, bitmap, attempt + 1)
+                    ),
+                    48,
+                )
+            except Exception as _suppressed_exc:
+                _note_suppressed(_suppressed_exc)
+        return False
 
     # The large settings-header logo is a regular Android ImageView.
     try:
@@ -926,6 +942,7 @@ def _apply_strength_from_settings(value: int):
 class _StrengthSeekListener(Base):
     def __init__(self, value_view):
         self.value_view = value_view
+        self.tracking = False
 
     @joverride()
     def onProgressChanged(self, seek_bar, progress, from_user):
@@ -943,14 +960,22 @@ class _StrengthSeekListener(Base):
             plugin = _ACTIVE_PLUGIN
             if plugin is not None:
                 plugin.preview_strength(value)
+                if not self.tracking:
+                    # TalkBack, keyboard and D-pad change the value without
+                    # touch tracking, so onStopTrackingTouch never comes.
+                    plugin.schedule_coalesced(
+                        ("strength_commit",),
+                        lambda value=value: plugin.commit_strength(value),
+                        500,
+                    )
 
     @joverride()
     def onStartTrackingTouch(self, seek_bar):
-        # Required by Android's SeekBar listener interface.
-        return
+        self.tracking = True
 
     @joverride()
     def onStopTrackingTouch(self, seek_bar):
+        self.tracking = False
         plugin = _ACTIVE_PLUGIN
         if plugin is None:
             return
@@ -2082,6 +2107,175 @@ class _EnterViewPanelShownAfterHook(MethodHook):
         )
 
 
+def _extension_dex_paths(extension_id: str, expected_sha256: str) -> Tuple[str, str, str]:
+    context = ApplicationLoader.applicationContext
+    if context is None:
+        raise RuntimeError("Application context is unavailable")
+    base = str(context.getCodeCacheDir().getAbsolutePath())
+    root = os.path.join(base, "glassify_dex")
+    opt_dir = os.path.join(root, "opt")
+    path = os.path.join(root, f"{extension_id}_{expected_sha256[:12]}.dex")
+    return root, opt_dir, path
+
+
+def _cached_dex_valid(path: str, expected_sha256: str, expected_size: int) -> bool:
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) != expected_size:
+            return False
+        with open(path, "rb") as existing_file:
+            existing = existing_file.read(expected_size + 1)
+        return (
+            len(existing) == expected_size
+            and hashlib.sha256(existing).hexdigest() == expected_sha256
+        )
+    except Exception as exc:
+        _note_suppressed(exc)
+        return False
+
+
+def _ensure_extension_dex(
+    extension_id: str,
+    chunk_urls: Any,
+    expected_sha256: Any,
+    expected_size: Any,
+    log: Any = None,
+) -> Tuple[str, str]:
+    """Return a verified local DEX path, downloading it only when missing.
+
+    The cached file is checked first: iOS Input used to download its payload
+    on every start, on the UI thread, and failed completely offline.
+    """
+    urls = list(chunk_urls or [])
+    if not 1 <= len(urls) <= 32:
+        raise ValueError("DEX payload must contain 1 to 32 chunks")
+    expected_sha256 = str(expected_sha256).lower().strip()
+    if not _SHA256_RE.fullmatch(expected_sha256):
+        raise ValueError("invalid DEX SHA-256")
+    expected_size = int(expected_size)
+    if not 1 <= expected_size <= 512 * 1024:
+        raise ValueError("invalid DEX size")
+
+    root, opt_dir, path = _extension_dex_paths(extension_id, expected_sha256)
+    os.makedirs(opt_dir, mode=0o700, exist_ok=True)
+    if _cached_dex_valid(path, expected_sha256, expected_size):
+        return path, opt_dir
+
+    prefix = (
+        "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/"
+        f"extensions/{extension_id}/"
+    )
+    encoded_parts: List[bytes] = []
+    encoded_total = 0
+    encoded_limit = 384 * 1024
+    for raw_url in urls:
+        url = str(raw_url)
+        if not url.startswith(prefix):
+            raise ValueError("DEX chunk is outside this extension directory")
+        response = requests.get(
+            url,
+            timeout=(5, 20),
+            stream=True,
+            headers={"User-Agent": f"Glassify/{__version__}"},
+        )
+        response.raise_for_status()
+        length = response.headers.get("Content-Length")
+        if length:
+            try:
+                if int(length) > encoded_limit - encoded_total:
+                    raise ValueError("compressed DEX payload is too large")
+            except ValueError as exc:
+                if str(exc) == "compressed DEX payload is too large":
+                    raise
+        chunk_data: List[bytes] = []
+        for piece in response.iter_content(chunk_size=8192):
+            if not piece:
+                continue
+            encoded_total += len(piece)
+            if encoded_total > encoded_limit:
+                raise ValueError("compressed DEX payload is too large")
+            chunk_data.append(piece)
+        encoded_parts.append(b"".join(chunk_data).strip())
+
+    try:
+        packed = base64.b64decode(b"".join(encoded_parts), validate=True)
+        decompressor = zlib.decompressobj()
+        raw = decompressor.decompress(packed, expected_size + 1)
+        if len(raw) > expected_size or not decompressor.eof:
+            raise ValueError("DEX size mismatch")
+    except Exception as exc:
+        raise ValueError("invalid compressed DEX payload") from exc
+    if len(raw) != expected_size:
+        raise ValueError("DEX size mismatch")
+    if hashlib.sha256(raw).hexdigest() != expected_sha256:
+        raise ValueError("DEX SHA-256 mismatch")
+
+    temp_path = f"{path}.{uuid.uuid4().hex}.tmp"
+    try:
+        with open(temp_path, "xb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temp_path, 0o444)
+        os.replace(temp_path, path)
+        os.chmod(path, 0o444)
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception as exc:
+                _note_suppressed(exc)
+
+    try:
+        stale_prefix = extension_id + "_"
+        for filename in os.listdir(root):
+            candidate = os.path.join(root, filename)
+            if (
+                filename.startswith(stale_prefix)
+                and filename.endswith(".dex")
+                and os.path.realpath(candidate) != os.path.realpath(path)
+                and os.path.isfile(candidate)
+            ):
+                try:
+                    os.remove(candidate)
+                except Exception as exc:
+                    if log is not None:
+                        log("stale DEX cleanup failed: " + str(exc))
+    except Exception as exc:
+        _note_suppressed(exc)
+    return path, opt_dir
+
+
+def _static_dex_request(tree: Any) -> Optional[Tuple[List[str], str, int]]:
+    """Read literal _DEX_CHUNKS/_DEX_SHA256/_DEX_SIZE from an extension.
+
+    Lets Glassify fetch a DEX payload on a background thread before the
+    extension's on_load (which runs on the UI thread) asks for it.
+    """
+    values: Dict[str, Any] = {}
+    for statement in getattr(tree, "body", ()):
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        target = statement.targets[0]
+        if isinstance(target, ast.Name) and target.id in (
+            "_DEX_CHUNKS",
+            "_DEX_SHA256",
+            "_DEX_SIZE",
+        ):
+            try:
+                values[target.id] = ast.literal_eval(statement.value)
+            except Exception:
+                return None
+    if len(values) != 3:
+        return None
+    chunks = values["_DEX_CHUNKS"]
+    if not isinstance(chunks, (list, tuple)) or not all(isinstance(c, str) for c in chunks):
+        return None
+    try:
+        return list(chunks), str(values["_DEX_SHA256"]), int(values["_DEX_SIZE"])
+    except (TypeError, ValueError):
+        return None
+
+
 class GlassifyExtensionAPI:
     """Small, tracked API exposed to optional Glassify extensions.
 
@@ -2245,121 +2439,17 @@ class GlassifyExtensionAPI:
         imports/open/DexClassLoader access to catalog extensions.
         """
         self._require_api4()
-        urls = list(chunk_urls or [])
-        if not 1 <= len(urls) <= 32:
-            raise ValueError("DEX payload must contain 1 to 32 chunks")
-        expected_sha256 = str(expected_sha256).lower().strip()
-        if not _SHA256_RE.fullmatch(expected_sha256):
-            raise ValueError("invalid DEX SHA-256")
-        expected_size = int(expected_size)
-        if not 1 <= expected_size <= 512 * 1024:
-            raise ValueError("invalid DEX size")
         main_class_name = str(main_class_name).strip()
         if not main_class_name or len(main_class_name) > 240:
             raise ValueError("invalid DEX main class")
-
-        prefix = (
-            "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/"
-            f"extensions/{self.extension_id}/"
+        path, opt_dir = _ensure_extension_dex(
+            self.extension_id,
+            chunk_urls,
+            expected_sha256,
+            expected_size,
+            self.log,
         )
-        encoded_parts: List[bytes] = []
-        encoded_total = 0
-        encoded_limit = 384 * 1024
-        for raw_url in urls:
-            url = str(raw_url)
-            if not url.startswith(prefix):
-                raise ValueError("DEX chunk is outside this extension directory")
-            response = requests.get(
-                url,
-                timeout=(5, 20),
-                stream=True,
-                headers={"User-Agent": f"Glassify/{__version__}"},
-            )
-            response.raise_for_status()
-            length = response.headers.get("Content-Length")
-            if length:
-                try:
-                    if int(length) > encoded_limit - encoded_total:
-                        raise ValueError("compressed DEX payload is too large")
-                except ValueError as exc:
-                    if str(exc) == "compressed DEX payload is too large":
-                        raise
-            chunk_data: List[bytes] = []
-            for piece in response.iter_content(chunk_size=8192):
-                if not piece:
-                    continue
-                encoded_total += len(piece)
-                if encoded_total > encoded_limit:
-                    raise ValueError("compressed DEX payload is too large")
-                chunk_data.append(piece)
-            encoded_parts.append(b"".join(chunk_data).strip())
-
-        try:
-            packed = base64.b64decode(b"".join(encoded_parts), validate=True)
-            decompressor = zlib.decompressobj()
-            raw = decompressor.decompress(packed, expected_size + 1)
-            if len(raw) > expected_size or not decompressor.eof:
-                raise ValueError("DEX size mismatch")
-        except Exception as exc:
-            raise ValueError("invalid compressed DEX payload") from exc
-        if len(raw) != expected_size:
-            raise ValueError("DEX size mismatch")
-        if hashlib.sha256(raw).hexdigest() != expected_sha256:
-            raise ValueError("DEX SHA-256 mismatch")
-
         context = ApplicationLoader.applicationContext
-        if context is None:
-            raise RuntimeError("Application context is unavailable")
-        base = str(context.getCodeCacheDir().getAbsolutePath())
-        root = os.path.join(base, "glassify_dex")
-        opt_dir = os.path.join(root, "opt")
-        os.makedirs(opt_dir, mode=0o700, exist_ok=True)
-        path = os.path.join(
-            root,
-            self.extension_id + "_" + expected_sha256[:12] + ".dex",
-        )
-        valid = False
-        try:
-            if os.path.isfile(path):
-                with open(path, "rb") as existing_file:
-                    existing = existing_file.read(expected_size + 1)
-                valid = (
-                    len(existing) == expected_size
-                    and hashlib.sha256(existing).hexdigest() == expected_sha256
-                )
-        except Exception as _suppressed_exc:
-            _note_suppressed(_suppressed_exc)
-        if not valid:
-            temp_path = path + ".tmp"
-            try:
-                os.remove(temp_path)
-            except Exception as _suppressed_exc:
-                _note_suppressed(_suppressed_exc)
-            with open(temp_path, "wb") as stream:
-                stream.write(raw)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.chmod(temp_path, 0o444)
-            os.replace(temp_path, path)
-            os.chmod(path, 0o444)
-
-        try:
-            prefix = self.extension_id + "_"
-            for filename in os.listdir(root):
-                candidate = os.path.join(root, filename)
-                if (
-                    filename.startswith(prefix)
-                    and filename.endswith(".dex")
-                    and os.path.realpath(candidate) != os.path.realpath(path)
-                    and os.path.isfile(candidate)
-                ):
-                    try:
-                        os.remove(candidate)
-                    except Exception as exc:
-                        self.log("stale DEX cleanup failed: " + str(exc))
-        except Exception as _suppressed_exc:
-            _note_suppressed(_suppressed_exc)
-
         DexClassLoader = jclass("dalvik.system.DexClassLoader")
         loader = DexClassLoader(path, opt_dir, None, context.getClassLoader())
         clazz = loader.loadClass(main_class_name)
@@ -2584,6 +2674,8 @@ class GlassifyPlugin(BasePlugin):
 
         # Settings UI state.
         self._area_flag_cache: Dict[str, bool] = {}
+        self._logged_once = set()
+        self._known_chat_fragments: Dict[int, Any] = {}
         self._last_dialogs_fragment = None
         self._pending_uninstall: Tuple[str, float] = ("", 0.0)
 
@@ -2720,11 +2812,75 @@ class GlassifyPlugin(BasePlugin):
             # stored separately in _m3_chat_headers and stays active.
             self._remove_disallowed_top_overlays()
         else:
-            # Rebuild the screens behind settings so the effect is back without
-            # reopening a chat. Every overlay is dropped first: the rebuild
-            # recreates them for the new views instead of updating old ones.
-            self.remove_top_overlays()
-            self.schedule(self.rebuild_current_fragment_views, 0)
+            # Put the effect back on chats that are still open behind the
+            # settings page. Rebuilding every fragment in the stack (0.4.0)
+            # was heavy and reset scroll positions.
+            for fragment in self._alive_chat_fragments():
+                self.schedule(
+                    lambda fragment=fragment: self.decorate_fragment(
+                        fragment,
+                        self.field(fragment, "fragmentView"),
+                        "chat",
+                    ),
+                    0,
+                )
+
+    def _remember_chat_fragment(self, fragment: Any):
+        if fragment is None:
+            return
+        key = _identity(fragment)
+        self._known_chat_fragments.pop(key, None)
+        self._known_chat_fragments[key] = fragment
+        while len(self._known_chat_fragments) > 12:
+            self._known_chat_fragments.pop(next(iter(self._known_chat_fragments)), None)
+
+    def _alive_chat_fragments(self) -> List[Any]:
+        alive = []
+        for key, fragment in list(self._known_chat_fragments.items()):
+            if self.field(fragment, "fragmentView") is None:
+                self._known_chat_fragments.pop(key, None)
+            else:
+                alive.append(fragment)
+        return alive
+
+    def _view_inside(self, view: Any, ancestor: Any, max_depth: int = 12) -> bool:
+        if view is None or ancestor is None:
+            return False
+        target = _identity(ancestor)
+        current = view
+        for _ in range(max_depth):
+            if current is None:
+                return False
+            if _identity(current) == target:
+                return True
+            try:
+                current = current.getParent()
+            except Exception:
+                return False
+        return False
+
+    def _overlay_belongs_to(self, data: Any, fragment: Any) -> bool:
+        """False when the fragment rebuilt its views after the overlay was made."""
+        if not isinstance(data, dict):
+            return False
+        root = self.field(fragment, "fragmentView")
+        if root is None:
+            return True
+        layers = data.get("layers") or ()
+        view = layers[0].get("view") if layers else data.get("view")
+        if self._view_inside(view, root):
+            return True
+        # Some screens attach the overlay to a container above fragmentView.
+        return self._view_inside(root, data.get("parent"))
+
+    def _drop_stale_overlay(self, fragment: Any) -> bool:
+        key = _identity(fragment)
+        data = self._top_overlays.get(key)
+        if data is None or self._overlay_belongs_to(data, fragment):
+            return False
+        self._top_overlays.pop(key, None)
+        self._remove_top_overlay_data(data)
+        return True
 
     def _stories_blur_changed(self, value: Any):
         enabled = self._store_area_flag(self.STORIES_BLUR_ENABLED_KEY, value)
@@ -2802,9 +2958,28 @@ class GlassifyPlugin(BasePlugin):
         if not self._extensions_master_enabled() or not self._extension_alive:
             return
 
-        for extension_id in list(self._installed_extensions().keys()):
-            if self._extension_enabled(extension_id):
+        enabled_ids = [
+            extension_id
+            for extension_id in self._installed_extensions().keys()
+            if self._extension_enabled(extension_id)
+        ]
+        generation, stop_event = self._extension_worker_context()
+
+        def load_enabled():
+            for extension_id in enabled_ids:
+                if not self._extension_worker_active(generation, stop_event):
+                    return
+                self._prefetch_extension_dex(extension_id)
                 self._load_extension(extension_id)
+            if enabled_ids:
+                self._reload_extension_settings()
+
+        if enabled_ids:
+            threading.Thread(
+                target=load_enabled,
+                name="GlassifyExtensionsStart",
+                daemon=True,
+            ).start()
 
         self._refresh_extension_catalog_async(silent=True)
 
@@ -4061,6 +4236,8 @@ class GlassifyPlugin(BasePlugin):
                     self.set_setting(self._extension_enabled_key(extension_id), False)
                 self._require_extension_worker_active(generation, stop_event)
 
+                if should_enable:
+                    self._prefetch_extension_dex(extension_id)
                 if should_enable and not self._load_extension(extension_id):
                     detail = self._extension_last_errors.get(
                         extension_id, "ошибка загрузки"
@@ -4199,15 +4376,41 @@ class GlassifyPlugin(BasePlugin):
         enabled = bool(value)
         self.set_setting(self._extension_enabled_key(extension_id), enabled)
         if enabled:
-            if not self._load_extension(extension_id):
-                self.set_setting(self._extension_enabled_key(extension_id), False)
-                detail = self._extension_last_errors.get(
-                    extension_id, "ошибка загрузки"
-                )
-                self._extension_notify(f"Не удалось включить: {detail}")
+            with self._extension_lock:
+                if extension_id in self._extension_jobs:
+                    self._extension_notify("Дождитесь завершения текущей операции")
+                    return
+                self._extension_jobs[extension_id] = "enable"
+            generation, stop_event = self._extension_worker_context()
+
+            def enable_worker():
+                # Parsing, a possible DEX download and compilation stay off
+                # the UI thread; only the extension's on_load runs there.
+                try:
+                    self._prefetch_extension_dex(extension_id)
+                    loaded = self._load_extension(extension_id)
+                finally:
+                    if generation == self._extension_generation:
+                        with self._extension_lock:
+                            self._extension_jobs.pop(extension_id, None)
+                if not self._extension_worker_active(generation, stop_event):
+                    return
+                if loaded:
+                    self._extension_notify("Расширение включено")
+                else:
+                    self.set_setting(self._extension_enabled_key(extension_id), False)
+                    detail = self._extension_last_errors.get(
+                        extension_id, "ошибка загрузки"
+                    )
+                    self._extension_notify(f"Не удалось включить: {detail}")
                 self._reload_extension_settings()
-                return
-            self._extension_notify("Расширение включено")
+
+            threading.Thread(
+                target=enable_worker,
+                name=f"GlassifyEnable-{extension_id}",
+                daemon=True,
+            ).start()
+            return
         else:
             self._unload_extension(extension_id)
             self._extension_notify("Расширение выключено")
@@ -4243,6 +4446,27 @@ class GlassifyPlugin(BasePlugin):
         self._extension_last_errors.pop(extension_id, None)
         self._extension_notify("Расширение удалено")
         self._reload_extension_settings()
+
+    def _prefetch_extension_dex(self, extension_id: str):
+        """Download an API 4 extension's DEX payload before on_load needs it."""
+        installed = self._installed_extensions().get(extension_id)
+        if not installed or int(installed.get("api", 0) or 0) < 4:
+            return
+        try:
+            path = self._extension_file_path(extension_id, installed)
+            if not path or not os.path.isfile(path):
+                return
+            data = self._read_limited_file(path)
+            if hashlib.sha256(data).hexdigest() != str(installed.get("sha256", "")):
+                return
+            request = _static_dex_request(ast.parse(data.decode("utf-8"), filename=path))
+            if request is None:
+                return
+            chunks, sha256, size = request
+            _ensure_extension_dex(extension_id, chunks, sha256, size, self.log)
+        except Exception as exc:
+            # on_load reports the real error if the payload is still missing.
+            self._log_suppressed(f"prefetch DEX for {extension_id}", exc)
 
     def _load_extension(self, extension_id: str) -> bool:
         if not self._plugin_alive or not self._extension_alive:
@@ -4983,6 +5207,15 @@ class GlassifyPlugin(BasePlugin):
             )
 
         job = self._extension_jobs.get(extension_id)
+        if job == "enable":
+            items.append(
+                Text(
+                    text="Включение…",
+                    subtext="Проверяем файл и запускаем расширение",
+                    icon="msg_settings",
+                )
+            )
+            return items
         if job:
             items.append(
                 Text(
@@ -5611,6 +5844,7 @@ class GlassifyPlugin(BasePlugin):
         self._strength_cache = value
         # Cancel a queued preview so it cannot run after the final committed pass.
         self._coalesced_tokens.pop(("strength_preview",), None)
+        self._coalesced_tokens.pop(("strength_commit",), None)
         self.set_setting("glass_strength", value)
         self.apply_strength(value)
         self.log(f"Glassify: Liquid Glass strength={value}")
@@ -6520,14 +6754,10 @@ class GlassifyPlugin(BasePlugin):
                         _note_suppressed(_suppressed_exc)
 
     def log_once_keyboard(self, token: str, message: str):
-        marker = f"logged_{token}"
-        state = self._runtime_refs.setdefault(
-            -11416,
-            {},
-        )
-        if bool(state.get(marker, False)):
+        # Kept outside _runtime_refs: that mapping is pruned regularly.
+        if token in self._logged_once:
             return
-        state[marker] = True
+        self._logged_once.add(token)
         self.log(message)
 
     def restore_keyboard_panels(self):
@@ -7403,14 +7633,15 @@ class GlassifyPlugin(BasePlugin):
                 "last_material_signature": None,
             }
             self._liquid_drawables[key] = entry
-        elif view is not None:
-            entry["view"] = view
+        else:
+            if view is not None:
+                entry["view"] = view
+            # Least-recently-used order: long-lived drawables (main tabs,
+            # chat list header) must not be the first to be evicted.
+            self._liquid_drawables[key] = self._liquid_drawables.pop(key)
 
-        while len(self._liquid_drawables) > GLASSIFY_MAX_RUNTIME_REFS:
-            oldest = next(iter(self._liquid_drawables))
-            old_entry = self._liquid_drawables.pop(oldest, None)
-            if old_entry is not None:
-                self._restore_liquid_entry(old_entry)
+        if len(self._liquid_drawables) > GLASSIFY_MAX_RUNTIME_REFS:
+            self._trim_liquid_drawables()
 
         strength = self.current_strength()
         signature = self._material_signature(strength)
@@ -7483,6 +7714,25 @@ class GlassifyPlugin(BasePlugin):
         for api in list(self._extension_apis.values()):
             api._notify_strength(value)
 
+    def _trim_liquid_drawables(self):
+        """Past the cap, forget detached drawables, then the least recently used.
+
+        Evicted entries are not restored: an evicted drawable can still be on
+        screen, and resetting it to stock made the main screen lose its glass
+        after many chats had been opened.
+        """
+        if len(self._liquid_drawables) <= GLASSIFY_MAX_RUNTIME_REFS:
+            # Screens under the settings page are detached too and must keep
+            # following the slider, so nothing is dropped below the cap.
+            return
+        for key, entry in list(self._liquid_drawables.items()):
+            if len(self._liquid_drawables) <= GLASSIFY_MAX_RUNTIME_REFS:
+                break
+            if self._view_is_detached(entry.get("view")):
+                self._liquid_drawables.pop(key, None)
+        while len(self._liquid_drawables) > GLASSIFY_MAX_RUNTIME_REFS:
+            self._liquid_drawables.pop(next(iter(self._liquid_drawables)), None)
+
     def _restore_liquid_entry(self, entry: Dict[str, Any]):
         drawable = entry.get("drawable")
         view = entry.get("view")
@@ -7528,6 +7778,7 @@ class GlassifyPlugin(BasePlugin):
             return
 
         fragment_key = _identity(fragment)
+        self._drop_stale_overlay(fragment)
         existing = self._top_overlays.get(fragment_key)
         if existing is not None:
             self.refresh_dialogs_stories(fragment)
@@ -7748,6 +7999,7 @@ class GlassifyPlugin(BasePlugin):
             return
 
         fragment_key = _identity(fragment)
+        self._drop_stale_overlay(fragment)
         data = self._top_overlays.get(fragment_key)
         if data is None:
             root = self.field(fragment, "fragmentView")
@@ -8227,10 +8479,18 @@ class GlassifyPlugin(BasePlugin):
             return
 
         if kind == "chat":
+            self._remember_chat_fragment(fragment)
             existing_m3 = self._m3_chat_headers.get(_identity(fragment))
             if isinstance(existing_m3, dict):
-                self._apply_m3_chat_header_fade(existing_m3)
-                return
+                current_root = self.field(fragment, "fragmentView")
+                if current_root is None or self._view_inside(
+                    existing_m3.get("view"), current_root
+                ):
+                    self._apply_m3_chat_header_fade(existing_m3)
+                    return
+                # The chat rebuilt its views: detect the new header.
+                self._restore_m3_header_state(existing_m3)
+                self._m3_chat_headers.pop(_identity(fragment), None)
 
             m3_header = self.find_m3_chat_header(fragment, root)
             if m3_header is not None:
@@ -8259,6 +8519,7 @@ class GlassifyPlugin(BasePlugin):
                 self.collect_fragment_drawables(fragment)
             return
 
+        self._drop_stale_overlay(fragment)
         existing = self._top_overlays.get(fragment_key)
         if existing is not None:
             self.update_one_top_overlay(existing, self.current_strength())
@@ -8350,6 +8611,7 @@ class GlassifyPlugin(BasePlugin):
                 "base": base,
                 "parent": overlay_parent,
                 "kind": kind,
+                "fragment": fragment,
                 "action_bar": action_bar,
                 "screen_offset": 0.0,
             }
@@ -8498,9 +8760,10 @@ class GlassifyPlugin(BasePlugin):
                 data.get("action_bar"),
             )
 
-        self.log(
+        self.log_once_keyboard(
+            f"top_blur_aligned_{data.get('kind')}",
             "Glassify: top blur aligned to screen Y=0 "
-            f"(layout offset={int(round(offset))}px)"
+            f"(layout offset={int(round(offset))}px)",
         )
 
     def raise_top_controls(self, fragment: Any, action_bar: Any):
@@ -8683,7 +8946,8 @@ class GlassifyPlugin(BasePlugin):
                 bool(layer.get("_geometry_changed", False))
                 for layer in data.get("layers", ())
             ):
-                self.schedule(
+                self.schedule_coalesced(
+                    ("overlay_align", id(data)),
                     lambda: self.align_overlay_to_screen_top(data),
                     16,
                 )
@@ -8723,7 +8987,11 @@ class GlassifyPlugin(BasePlugin):
             _note_suppressed(_suppressed_exc)
 
         if geometry_changed:
-            self.schedule(lambda: self.align_overlay_to_screen_top(data), 16)
+            self.schedule_coalesced(
+                ("overlay_align", id(data)),
+                lambda: self.align_overlay_to_screen_top(data),
+                16,
+            )
 
     def _remove_top_overlay_data(self, data: Dict[str, Any]):
         if not isinstance(data, dict):
@@ -8799,7 +9067,8 @@ class GlassifyPlugin(BasePlugin):
 
     @staticmethod
     def _with_alpha(color: int, alpha: int) -> int:
-        return ((int(alpha) & 0xFF) << 24) | (int(color) & 0x00FFFFFF)
+        # Signed: jint arrays reject 0xFF...... values (M3 fade never applied).
+        return _with_alpha_color(color, alpha)
 
     def _main_tabs_inset_color(self, activity: Any) -> int:
         if activity is None:
@@ -8870,7 +9139,7 @@ class GlassifyPlugin(BasePlugin):
                 )
                 content_view.addView(shield, params)
 
-                self._main_tabs_inset_shields[key] = {
+                state = {
                     "activity": activity,
                     "parent": content_view,
                     "view": shield,
@@ -8878,6 +9147,7 @@ class GlassifyPlugin(BasePlugin):
                     "last_color": None,
                     "last_visible": None,
                 }
+                self._main_tabs_inset_shields[key] = state
                 self._maybe_prune_runtime_refs()
             except Exception as exc:
                 self._log_suppressed("create main tabs inset shield", exc)
@@ -8972,6 +9242,7 @@ class GlassifyPlugin(BasePlugin):
             return
 
         self._runtime_refs[runtime_key] = {
+            "activity": activity,
             "content": content_view,
             "tabs_view": tabs_view,
         }
@@ -9015,17 +9286,38 @@ class GlassifyPlugin(BasePlugin):
             _note_suppressed(_suppressed_exc)
         return attached is False and parent is None
 
-    def _trim_runtime_mapping(self, mapping: Dict[int, Any]):
-        if len(mapping) <= GLASSIFY_MAX_RUNTIME_REFS:
-            return
+    def _trim_runtime_mapping(
+        self,
+        mapping: Dict[int, Any],
+        on_drop: Any = None,
+    ):
+        # Closed chats leave detached views behind. Drop them on every pass;
+        # waiting for the cap kept up to 256 closed screens in memory and made
+        # every strength change walk all of them.
         for key, data in list(mapping.items()):
-            if len(mapping) <= GLASSIFY_MAX_RUNTIME_REFS:
-                break
             view = self._runtime_view(data)
-            if self._view_is_detached(view):
-                mapping.pop(key, None)
+            if self._view_is_detached(view) and self._runtime_owner_gone(data):
+                dropped = mapping.pop(key, None)
+                if on_drop is not None and dropped is not None:
+                    on_drop(dropped)
         while len(mapping) > GLASSIFY_MAX_RUNTIME_REFS:
-            mapping.pop(next(iter(mapping)), None)
+            dropped = mapping.pop(next(iter(mapping)), None)
+            if on_drop is not None and dropped is not None:
+                on_drop(dropped)
+
+    def _runtime_owner_gone(self, data: Any) -> bool:
+        """A detached view may belong to a screen that is only hidden.
+
+        Fragments in the back stack keep their views while another screen is
+        on top. Treat an entry as closed only when its fragment has no view
+        any more (or it has no fragment at all).
+        """
+        if not isinstance(data, dict):
+            return True
+        owner = data.get("fragment") or data.get("activity")
+        if owner is None:
+            return True
+        return self.field(owner, "fragmentView") is None
 
     def _runtime_cache_pressure(self) -> bool:
         threshold = int(GLASSIFY_MAX_RUNTIME_REFS * 0.75)
@@ -9061,9 +9353,10 @@ class GlassifyPlugin(BasePlugin):
             self._main_tabs_inset_shields,
         ):
             self._trim_runtime_mapping(mapping)
+        self._trim_liquid_drawables()
         for key, state in list(self._m3_chat_headers.items()):
             view = state.get("view") if isinstance(state, dict) else None
-            if self._view_is_detached(view):
+            if self._view_is_detached(view) and self._runtime_owner_gone(state):
                 stale_state = self._m3_chat_headers.pop(key, None)
                 if isinstance(stale_state, dict):
                     self._remove_m3_header_fade_view(stale_state)
