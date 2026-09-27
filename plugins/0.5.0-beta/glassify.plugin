@@ -67,7 +67,7 @@ __app_version__ = ">=12.9.0"
 __sdk_version__ = ">=1.4.4.3"
 
 
-GLASSIFY_RELEASE_CHANNEL = "beta"
+GLASSIFY_RELEASE_CHANNEL = "Beta"
 GLASSIFY_AUTHOR_HANDLE = "@VladSamsung"
 GLASSIFY_AUTHOR_URL = "https://t.me/VladSamsung"
 GLASSIFY_REPOSITORY_URL = "https://github.com/v06000508-wq/Glassify"
@@ -87,8 +87,8 @@ GLASSIFY_CHANGELOG: Dict[str, Dict[str, Any]] = {
         "items": (
             (
                 "Понятная структура",
-                "Настройки разделены на «Стекло», «Где применять», «Расширения» "
-                "и «О плагине». Версия показывается один раз.",
+                "Настройки собраны в категории «Стекло», «Где применять», "
+                "«Расширения» и «Что нового», ссылки — в отдельном блоке.",
             ),
             (
                 "Пресеты силы",
@@ -290,7 +290,7 @@ def _theme_color(key: int, resources_provider: Any = None) -> int:
         try:
             return int(Theme.getColor(key))
         except Exception:
-            return 0xFFFFFFFF
+            return -1  # opaque white as a signed Java int
 
 
 def _validate_extension_attribute_name(name: Any) -> str:
@@ -679,8 +679,18 @@ def _theme_key(*names: str) -> int:
     return Theme.key_windowBackgroundWhiteBlackText
 
 
+def _java_color(color: int) -> int:
+    """Convert an ARGB value to a signed 32-bit Java int.
+
+    Python keeps 0xFF336699 positive; Java int parameters reject values above
+    0x7FFFFFFF, which made every custom row fall back to plain text.
+    """
+    value = int(color) & 0xFFFFFFFF
+    return value - 0x100000000 if value >= 0x80000000 else value
+
+
 def _with_alpha_color(color: int, alpha: int) -> int:
-    return ((int(alpha) & 0xFF) << 24) | (int(color) & 0x00FFFFFF)
+    return _java_color(((int(alpha) & 0xFF) << 24) | (int(color) & 0x00FFFFFF))
 
 
 def _settings_palette(resources_provider: Any = None) -> Dict[str, int]:
@@ -700,14 +710,14 @@ def _settings_palette(resources_provider: Any = None) -> Dict[str, int]:
         resources_provider,
     )
     return {
-        "primary": int(primary),
-        "secondary": int(secondary),
+        "primary": _java_color(primary),
+        "secondary": _java_color(secondary),
         "accent": _with_alpha_color(accent, 0xFF),
         "outline": _with_alpha_color(secondary, 0x59),
-        "on_accent": 0xFFFFFFFF,
-        "warning": 0xFFF0A04B,
-        "warning_button": 0xFFFFB86B,
-        "on_warning": 0xFF2A1A08,
+        "on_accent": _java_color(0xFFFFFFFF),
+        "warning": _java_color(0xFFF0A04B),
+        "warning_button": _java_color(0xFFFFB86B),
+        "on_warning": _java_color(0xFF2A1A08),
     }
 
 
@@ -719,10 +729,13 @@ def _rounded_drawable(
 ):
     drawable = GradientDrawable()
     drawable.setShape(GradientDrawable.RECTANGLE)
-    drawable.setColor(int(color))
+    drawable.setColor(_java_color(color))
     drawable.setCornerRadius(float(AndroidUtilities.dp(radius_dp)))
     if stroke_color is not None:
-        drawable.setStroke(max(1, AndroidUtilities.dp(stroke_dp)), int(stroke_color))
+        drawable.setStroke(
+            max(1, AndroidUtilities.dp(stroke_dp)),
+            _java_color(stroke_color),
+        )
     return drawable
 
 
@@ -730,7 +743,11 @@ def _with_ripple(content: Any, ripple_color: int, radius_dp: float):
     try:
         RippleDrawable = jclass("android.graphics.drawable.RippleDrawable")
         mask = _rounded_drawable(0xFFFFFFFF, radius_dp)
-        return RippleDrawable(ColorStateList.valueOf(int(ripple_color)), content, mask)
+        return RippleDrawable(
+            ColorStateList.valueOf(_java_color(ripple_color)),
+            content,
+            mask,
+        )
     except Exception as exc:
         _note_suppressed(exc)
         return content
@@ -746,7 +763,7 @@ def _settings_text(
     view = TextView(context)
     view.setText(str(text))
     view.setTextSize(TypedValue.COMPLEX_UNIT_SP, float(size_sp))
-    view.setTextColor(int(color))
+    view.setTextColor(_java_color(color))
     if bold:
         try:
             view.setTypeface(AndroidUtilities.bold())
@@ -1168,7 +1185,7 @@ def _create_glassify_header_view_impl(
         particles_view.drawable.colorKey = Theme.key_premiumStarGradient2
         particles_view.drawable.isCircle = True
         # Centre the particles on the logo rather than on the whole header.
-        particles_view.drawable.centerOffsetY = AndroidUtilities.dp(-36)
+        particles_view.drawable.centerOffsetY = AndroidUtilities.dp(-34)
         particles_view.drawable.minLifeTime = 2200
         particles_view.drawable.randLifeTime = 3200
         particles_view.drawable.useRotate = False
@@ -1207,48 +1224,18 @@ def _create_glassify_header_view_impl(
     _load_glassify_logo_into(logo)
     column.addView(
         logo,
-        _linear_params(AndroidUtilities.dp(88), AndroidUtilities.dp(88)),
+        _linear_params(AndroidUtilities.dp(108), AndroidUtilities.dp(108)),
     )
 
-    title_row = LinearLayout(context)
-    title_row.setOrientation(LinearLayout.HORIZONTAL)
-    title_row.setGravity(Gravity.CENTER)
-    title = _settings_text(context, "Glassify", 24.0, palette["primary"], True)
-    title_row.addView(
-        title,
-        _linear_params(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-        ),
+    title = _settings_text(
+        context,
+        f"Glassify {_version_label()}",
+        22.0,
+        palette["primary"],
+        True,
     )
-    version_chip = _settings_text(context, _version_label(), 12.0, palette["accent"], True)
-    version_chip.setSingleLine(True)
-    version_chip.setPadding(
-        AndroidUtilities.dp(9),
-        AndroidUtilities.dp(3),
-        AndroidUtilities.dp(9),
-        AndroidUtilities.dp(3),
-    )
-    try:
-        version_chip.setBackground(
-            _rounded_drawable(_with_alpha_color(palette["accent"], 0x29), 100)
-        )
-    except Exception as _suppressed_exc:
-        _note_suppressed(_suppressed_exc)
-    chip_params = _linear_params(
-        ViewGroup.LayoutParams.WRAP_CONTENT,
-        ViewGroup.LayoutParams.WRAP_CONTENT,
-    )
-    chip_params.leftMargin = AndroidUtilities.dp(8)
-    title_row.addView(version_chip, chip_params)
-    column.addView(
-        title_row,
-        _linear_params(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            top_dp=14,
-        ),
-    )
+    title.setGravity(Gravity.CENTER)
+    column.addView(title, _linear_params(top_dp=16))
 
     subtitle = _settings_text(
         context,
@@ -1258,7 +1245,7 @@ def _create_glassify_header_view_impl(
     )
     subtitle.setGravity(Gravity.CENTER)
     subtitle.setSingleLine(False)
-    column.addView(subtitle, _linear_params(top_dp=6))
+    column.addView(subtitle, _linear_params(top_dp=4))
 
     container.addView(
         column,
@@ -5329,7 +5316,7 @@ class GlassifyPlugin(BasePlugin):
                 text="Размытие под шапкой",
                 default=True,
                 subtext="Плавный переход от шапки к сообщениям в чатах",
-                icon="msg_blur",
+                icon="msg_discussion",
                 on_change=self._progressive_blur_changed,
             ),
             Switch(
@@ -5360,6 +5347,60 @@ class GlassifyPlugin(BasePlugin):
             on_change=self._extensions_master_changed,
         )
 
+    def _create_glass_settings(self) -> List[Any]:
+        items: List[Any] = [Header(text="Интенсивность")]
+        try:
+            items.append(Custom(factory=StrengthSliderFactory.instance.java))
+        except Exception as exc:
+            _note_suppressed(exc)
+            self._log_suppressed("settings slider factory", exc)
+            items.append(
+                Divider(
+                    text=(
+                        f"Интенсивность: {self.current_strength()}%. "
+                        "Ползунок недоступен в этой сборке клиента."
+                    )
+                )
+            )
+        items.append(
+            Divider(
+                text=(
+                    "Меняет нативные параметры Liquid Glass. "
+                    "Применяется сразу, без перезапуска."
+                )
+            )
+        )
+        return items
+
+    def _create_areas_settings(self) -> List[Any]:
+        items: List[Any] = [Header(text="Где применять")]
+        items.extend(self._area_switches())
+        items.append(
+            Divider(
+                text=(
+                    "Если на вашей сборке что-то выглядит не так, "
+                    "отключите только эту область."
+                )
+            )
+        )
+        return items
+
+    def _create_extensions_category_settings(self) -> List[Any]:
+        items: List[Any] = [Header(text="Расширения"), self._extensions_master_switch()]
+        if self._extensions_master_enabled():
+            # Catalog rows without their own page header.
+            items.extend(self._create_extensions_settings()[1:])
+        else:
+            items.append(
+                Divider(
+                    text=(
+                        "Выключены по умолчанию. Каталог загружается только "
+                        "после включения, а каждое расширение включается отдельно."
+                    )
+                )
+            )
+        return items
+
     def _create_settings_impl(self) -> List[Any]:
         # Build the standard SDK rows first. Rich custom rows are optional and
         # must never become a single point of failure for the whole page.
@@ -5388,72 +5429,55 @@ class GlassifyPlugin(BasePlugin):
                     )
                 )
 
-        items.append(Header(text="Стекло"))
-        try:
-            items.append(Custom(factory=StrengthSliderFactory.instance.java))
-        except Exception as exc:
-            _note_suppressed(exc)
-            self._log_suppressed("settings slider factory", exc)
-            items.append(
-                Divider(
-                    text=(
-                        f"Интенсивность: {self.current_strength()}%. "
-                        "Ползунок недоступен в этой сборке клиента."
-                    )
-                )
-            )
-        items.append(Divider(text="Применяется сразу, без перезапуска."))
-
-        items.append(Header(text="Где применять"))
-        items.extend(self._area_switches())
-        items.append(
-            Divider(
-                text=(
-                    "Если на вашей сборке что-то выглядит не так, "
-                    "отключите только эту область."
-                )
-            )
+        extensions_accent = (
+            self._extensions_master_enabled() and self._extension_updates_count() > 0
         )
-
-        items.append(Header(text="Расширения"))
-        items.append(self._extensions_master_switch())
-        if self._extensions_master_enabled():
-            items.append(
-                Text(
-                    text="Каталог",
-                    subtext=self._extensions_summary_text(),
-                    icon="msg_customize",
-                    accent=self._extension_updates_count() > 0,
-                    create_sub_fragment=self._create_extensions_settings,
-                    link_alias="extensions",
-                )
-            )
-
-        items.append(Header(text="О плагине"))
+        items.append(Header(text="Категории"))
         items.extend(
             [
                 Text(
+                    text="Стекло",
+                    icon="msg_palette",
+                    create_sub_fragment=self._create_glass_settings,
+                    link_alias="glass",
+                ),
+                Text(
+                    text="Где применять",
+                    icon="msg_customize",
+                    create_sub_fragment=self._create_areas_settings,
+                    link_alias="areas",
+                ),
+                Text(
+                    text="Расширения",
+                    icon="msg_list",
+                    accent=extensions_accent,
+                    create_sub_fragment=self._create_extensions_category_settings,
+                    link_alias="extensions",
+                ),
+                Text(
                     text="Что нового",
-                    subtext=f"Главное в {__version__} на одном экране",
                     icon="msg_info",
                     create_sub_fragment=self._create_update_report_settings,
                     link_alias="whats_new",
                 ),
+            ]
+        )
+
+        items.append(Header(text="Ссылки"))
+        items.extend(
+            [
                 Text(
                     text="Автор",
-                    subtext=GLASSIFY_AUTHOR_HANDLE,
                     icon="msg_contacts",
                     on_click=lambda view: self._open_link(GLASSIFY_AUTHOR_URL),
                 ),
                 Text(
                     text="Исходный код",
-                    subtext="GitHub",
                     icon="msg_link",
                     on_click=lambda view: self._open_link(GLASSIFY_REPOSITORY_URL),
                 ),
                 Text(
                     text="Скопировать диагностику",
-                    subtext="Версии, флаги Blur3 и журнал ошибок — для баг-репорта",
                     icon="msg_copy",
                     on_click=self._copy_diagnostics,
                 ),
