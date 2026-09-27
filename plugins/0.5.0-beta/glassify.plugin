@@ -140,6 +140,8 @@ _GLASSIFY_LOGO_FETCHING = False
 _GLASSIFY_LOGO_WAITERS: List[Any] = []
 _GLASSIFY_LOGO_LOCK = threading.RLock()
 _GLASSIFY_LOGO_OVERLAYS: Dict[int, Any] = {}
+_GLASSIFY_LOGO_RETRY_AT = 0.0
+_GLASSIFY_LOGO_RETRY_DELAY = 600.0
 
 GLASSIFY_EXTENSION_API = 4
 GLASSIFY_CATALOG_URL = (
@@ -317,6 +319,172 @@ def _safe_extension_hasattr(obj: Any, name: Any) -> bool:
 def _safe_extension_setattr(obj: Any, name: Any, value: Any):
     safe_name = _validate_extension_attribute_name(name)
     return setattr(obj, safe_name, value)
+
+
+# The settings logo ships with the plugin (extensions/assets/glassify_logo_039b2.webp,
+# sha256 7679403399926bb4ec40ec5c00364d74a4f8a80ee807a1812253aebadde9803f), so it never needs the network.
+_GLASSIFY_LOGO_EMBEDDED_B64 = (
+    "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"
+    "/9w1f+7er7vg193A664EoLvz/bpLfN0tv+6aX3ePr7vo1930667ydXf9ust83W2/7jpfd9/vu8D3"
+    "3fD7rvB9d/y+S3zfLb/vGt93z++7yPfd5Puu8n13/b7LfN9tv+8633efz13g527gc1fwuTv43CV8"
+    "7hY/dw2fu4fPXcTnbuJzV/G5u/jcZXzuNj53HZ+7j89dyOdu5HNX8rk7+dylfO5WPnetnruXz13M"
+    "527mc1frubv53OV67nY9dz2fu5+fu0Cfu0Gfu0Kfu0Ofu0Sfu0Wfu0afu0efu8ieuwmfuwqfuwuf"
+    "uwyfu42/yv/KuQgAVlA4IO4bAABQewCdASoAAQABPjEWiUMiISEVOg1MIAMEs7dsitng0QbdU2v6"
+    "Tr95H+c5z+X4Db9RVu+Yvpm8w/oPeZv9of2j94j/Zesn+y+oV/Uv7x1rv7gewx+0npw/uF8Jv9h/"
+    "6H7jezN/6usA4JXwJ/yP90/Ib9qvMp9x/jfyc/rP/a4C3M398vwf5hf1r0qPFP5Tf13qC/if8m/x"
+    "v9n/cz++ftVzbs0XqHevX03/F/2v9tPOs1ffCv+t9wH9LP7v+U37/+8t4RdAL+Nfzn/Of3f91/7N"
+    "8fv+N/iPzG90/5h/j/+T/of3k/wH2Efxv+b/4r+3f5r/l/4X///+z7zPZT+wfsPfqSc7FKju2Kd1"
+    "rZgXifbTU7JDPz82Lg6nzYh+jtjXPaO7iAyAKVHdLTNYB47j2xOMmsje+rpuogqDM//aTe+nBp3U"
+    "V+1ZK78bOo/G3eVN8t25dw6GANDNMs4uEUm+RZWYU/9Nelr/gDINybrJdu8xPHUaFHhGOjF0PRu5"
+    "H759FZPXWE1eYWi+UM/Z5WUIV/g6LYQ66V2pDSHh9SwAIQqnmBnwnkh1vYoK2vh9jPbEC2JeFjxk"
+    "L3BDiQW0cu41CQ1xQzViARdlr0q5HgD1oaojcfxG9zTNXYGfWU2mEwMKy0XBIR4VpFcJ3uY5v6k/"
+    "Iz6oDPl4fbG3GVG6DrmnLbvrGP8/Ar9IR7+n5UI7I2f636OAOU40pKN+VjxHMIPvHb+VxusWjdfp"
+    "zotD448BHMous4MyBLHjItS8GFoCeqd+5xyxZ6Xu1PsATGuWcX31wcA2rZuBk7M3SeqEY+fLgYzw"
+    "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"
+)
 
 
 def _glassify_logo_cache_path() -> str:
@@ -550,10 +718,21 @@ def _download_glassify_logo() -> bytes:
         raise exc
 
 
+def _decode_embedded_glassify_logo():
+    try:
+        data = base64.b64decode("".join(_GLASSIFY_LOGO_EMBEDDED_B64))
+    except (binascii.Error, ValueError) as exc:
+        _note_suppressed(exc)
+        return None
+    return _decode_glassify_logo(data)
+
+
 def _finish_glassify_logo_fetch(bitmap: Any):
-    global _GLASSIFY_LOGO_BITMAP, _GLASSIFY_LOGO_FETCHING
+    global _GLASSIFY_LOGO_BITMAP, _GLASSIFY_LOGO_FETCHING, _GLASSIFY_LOGO_RETRY_AT
     plugin = _ACTIVE_PLUGIN
     with _GLASSIFY_LOGO_LOCK:
+        if bitmap is None:
+            _GLASSIFY_LOGO_RETRY_AT = time.monotonic() + _GLASSIFY_LOGO_RETRY_DELAY
         if plugin is None or not getattr(plugin, "_plugin_alive", False):
             _GLASSIFY_LOGO_WAITERS.clear()
             _GLASSIFY_LOGO_FETCHING = False
@@ -594,7 +773,7 @@ def _load_glassify_logo_into(view: Any):
     with _GLASSIFY_LOGO_LOCK:
         bitmap = _GLASSIFY_LOGO_BITMAP
     if bitmap is None:
-        bitmap = _read_cached_glassify_logo()
+        bitmap = _decode_embedded_glassify_logo() or _read_cached_glassify_logo()
         if bitmap is not None:
             with _GLASSIFY_LOGO_LOCK:
                 _GLASSIFY_LOGO_BITMAP = bitmap
@@ -603,6 +782,10 @@ def _load_glassify_logo_into(view: Any):
         return
 
     with _GLASSIFY_LOGO_LOCK:
+        if time.monotonic() < _GLASSIFY_LOGO_RETRY_AT:
+            # A download failed recently (offline): do not start a new
+            # network thread for every list bind.
+            return
         if len(_GLASSIFY_LOGO_WAITERS) < 32:
             _GLASSIFY_LOGO_WAITERS.append(view)
         if _GLASSIFY_LOGO_FETCHING:
@@ -2479,7 +2662,15 @@ class GlassifyExtensionAPI:
         if not isinstance(handle, dict) or handle not in self._dex_handles:
             raise ValueError("unknown DEX handle")
         values = list(args or [])
-        method = self._dex_find_method(handle.get("class"), str(method_name), len(values))
+        # Reflection lookup once per method, not on every call.
+        methods = handle.setdefault("methods", {})
+        method_key = (str(method_name), len(values))
+        method = methods.get(method_key)
+        if method is None:
+            method = self._dex_find_method(
+                handle.get("class"), str(method_name), len(values)
+            )
+            methods[method_key] = method
         return self._dex_invoke(method, None, values)
 
     def unload_embedded_dex(self, handle: Any):
@@ -2623,6 +2814,7 @@ class GlassifyPlugin(BasePlugin):
 
         # Pure performance caches. They do not alter rendering values.
         self._field_reflection_cache: Dict[Tuple[str, str], Any] = {}
+        self._field_fast_cache: Dict[Tuple[Any, str], Any] = {}
         self._missing_field_cache = set()
         self._m3_hint_fields_cache: Dict[str, Tuple[Any, ...]] = {}
         self._m3_fast_class_skip_cache: Dict[str, bool] = {}
@@ -2669,12 +2861,14 @@ class GlassifyPlugin(BasePlugin):
         self._extension_preview_jobs: Dict[str, bool] = {}
         self._extension_preview_waiters: Dict[str, List[Any]] = {}
         self._extension_preview_bitmaps: Dict[str, Any] = {}
+        self._extension_preview_retry_at: Dict[str, float] = {}
         self._extension_material_profiles: Dict[str, Dict[str, float]] = {}
         self._extension_restart_prompt_at = 0.0
 
         # Settings UI state.
         self._area_flag_cache: Dict[str, bool] = {}
         self._logged_once = set()
+        self._m3_header_misses: Dict[str, int] = {}
         self._known_chat_fragments: Dict[int, Any] = {}
         self._last_dialogs_fragment = None
         self._pending_uninstall: Tuple[str, float] = ("", 0.0)
@@ -2725,6 +2919,7 @@ class GlassifyPlugin(BasePlugin):
         self._m3_fast_class_skip_cache.clear()
         self._m3_hint_fields_cache.clear()
         self._missing_field_cache.clear()
+        self._field_fast_cache.clear()
         self._coalesced_tokens.clear()
 
         _SLIDER_LISTENERS.clear()
@@ -3381,6 +3576,8 @@ class GlassifyPlugin(BasePlugin):
         )
 
     def _refresh_extension_catalog_clicked(self, _view=None):
+        # A manual refresh also retries previews that failed while offline.
+        self._extension_preview_retry_at.clear()
         self._refresh_extension_catalog_async(silent=False)
 
     def _download_extension_catalog(self) -> bytes:
@@ -3516,6 +3713,40 @@ class GlassifyPlugin(BasePlugin):
         repository_path = parsed.path[len(marker) :]
         failures: List[str] = []
 
+        # Raw first: the bytes are pinned by SHA-256 either way, and the
+        # GitHub API has a low per-IP rate limit shared behind mobile NAT.
+        try:
+            response = requests.get(
+                preview_url,
+                stream=True,
+                timeout=(5, 15),
+                headers={
+                    "User-Agent": f"Glassify/{__version__}",
+                    "Cache-Control": "no-cache, no-store, max-age=0",
+                },
+            )
+            response.raise_for_status()
+            length = response.headers.get("Content-Length")
+            if length is not None and int(length) > GLASSIFY_MAX_PREVIEW_BYTES:
+                raise ValueError("preview is too large")
+            chunks: List[bytes] = []
+            total = 0
+            for chunk in response.iter_content(chunk_size=32768):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > GLASSIFY_MAX_PREVIEW_BYTES:
+                    raise ValueError("preview is too large")
+                chunks.append(chunk)
+            data = b"".join(chunks)
+            if not data:
+                raise ValueError("preview is empty")
+            if hashlib.sha256(data).hexdigest() != expected_digest:
+                raise ValueError("preview SHA-256 mismatch")
+            return data
+        except Exception as exc:
+            failures.append(f"raw: {exc}")
+
         try:
             api_url = (
                 "https://api.github.com/repos/v06000508-wq/Glassify/contents/"
@@ -3549,38 +3780,6 @@ class GlassifyPlugin(BasePlugin):
                 raise ValueError("preview SHA-256 mismatch")
             return data
 
-        try:
-            response = requests.get(
-                preview_url,
-                stream=True,
-                timeout=(5, 15),
-                headers={
-                    "User-Agent": f"Glassify/{__version__}",
-                    "Cache-Control": "no-cache, no-store, max-age=0",
-                },
-            )
-            response.raise_for_status()
-            length = response.headers.get("Content-Length")
-            if length is not None and int(length) > GLASSIFY_MAX_PREVIEW_BYTES:
-                raise ValueError("preview is too large")
-            chunks: List[bytes] = []
-            total = 0
-            for chunk in response.iter_content(chunk_size=32768):
-                if not chunk:
-                    continue
-                total += len(chunk)
-                if total > GLASSIFY_MAX_PREVIEW_BYTES:
-                    raise ValueError("preview is too large")
-                chunks.append(chunk)
-            data = b"".join(chunks)
-            if not data:
-                raise ValueError("preview is empty")
-            if hashlib.sha256(data).hexdigest() != expected_digest:
-                raise ValueError("preview SHA-256 mismatch")
-            return data
-        except Exception as exc:
-            failures.append(f"raw: {exc}")
-
         raise RuntimeError("; ".join(failures))
 
     def _decode_extension_preview(self, path: str):
@@ -3594,7 +3793,21 @@ class GlassifyPlugin(BasePlugin):
         if width <= 0 or height <= 0:
             raise ValueError("Android не смог прочитать размер изображения")
 
+        try:
+            target_width = int(
+                ApplicationLoader.applicationContext.getResources()
+                .getDisplayMetrics()
+                .widthPixels
+            )
+        except Exception:
+            target_width = 1080
+        target_width = max(480, target_width)
+
         sample = 1
+        # The card is at most screen-wide: a 1774 px preview decoded in full
+        # held ~6 MB per image.
+        while width // (sample * 2) >= target_width:
+            sample *= 2
         while (
             width // sample > GLASSIFY_MAX_PREVIEW_DIMENSION
             or height // sample > GLASSIFY_MAX_PREVIEW_DIMENSION
@@ -3688,6 +3901,13 @@ class GlassifyPlugin(BasePlugin):
             if bitmap is not None:
                 self._set_extension_preview_view(view, bitmap=bitmap)
                 return
+            if time.monotonic() < self._extension_preview_retry_at.get(key, 0.0):
+                # Failed recently (e.g. offline): no new download per bind.
+                self._set_extension_preview_view(
+                    view,
+                    message="Предпросмотр недоступен",
+                )
+                return
             waiters = self._extension_preview_waiters.setdefault(key, [])
             if all(_identity(existing) != _identity(view) for existing in waiters):
                 waiters.append(view)
@@ -3723,12 +3943,16 @@ class GlassifyPlugin(BasePlugin):
             with self._extension_lock:
                 waiters = self._extension_preview_waiters.pop(key, [])
                 self._extension_preview_jobs.pop(key, None)
+                if error:
+                    self._extension_preview_retry_at[key] = time.monotonic() + 600.0
+                else:
+                    self._extension_preview_retry_at.pop(key, None)
                 if bitmap is not None and self._extension_worker_active(
                     generation,
                     stop_event,
                 ):
                     self._extension_preview_bitmaps[key] = bitmap
-                    while len(self._extension_preview_bitmaps) > 8:
+                    while len(self._extension_preview_bitmaps) > 4:
                         oldest = next(iter(self._extension_preview_bitmaps))
                         self._extension_preview_bitmaps.pop(oldest, None)
 
@@ -3769,7 +3993,10 @@ class GlassifyPlugin(BasePlugin):
                 return
             self._extension_jobs["__catalog__"] = "refresh"
 
-        self._reload_extension_settings()
+        if not silent:
+            # Show "Обновление каталога…" only for a manual refresh; a silent
+            # background refresh redraws the page once, when it finishes.
+            self._reload_extension_settings()
         generation, stop_event = self._extension_worker_context()
 
         def worker():
@@ -6608,6 +6835,7 @@ class GlassifyPlugin(BasePlugin):
         button_alphas = data.setdefault("button_alphas", {})
         buttons = self.field(keyboard, "buttonViews")
 
+        current_backgrounds = set()
         if buttons is not None:
             try:
                 count = int(buttons.size())
@@ -6639,6 +6867,7 @@ class GlassifyPlugin(BasePlugin):
                     continue
 
                 background_key = _identity(background)
+                current_backgrounds.add(background_key)
                 if background_key not in button_alphas:
                     original_alpha = 255
                     try:
@@ -6658,6 +6887,13 @@ class GlassifyPlugin(BasePlugin):
                         applied[background_key] = int(alpha)
                     except Exception as _suppressed_exc:
                         _note_suppressed(_suppressed_exc)
+
+            # setButtons() replaces the buttons: forget backgrounds of the old
+            # ones instead of keeping every generation of them forever.
+            applied = data.setdefault("applied_button_alphas", {})
+            for stale_key in [k for k in button_alphas if k not in current_backgrounds]:
+                button_alphas.pop(stale_key, None)
+                applied.pop(stale_key, None)
 
         fragment, container = self.resolve_keyboard_context(keyboard, data)
 
@@ -7346,13 +7582,22 @@ class GlassifyPlugin(BasePlugin):
                         "safe_glass": True,
                     }
 
-        # Search visible descendants by their actual runtime class.
-        for base in (action_bar, root):
+        # Search visible descendants by their actual runtime class. Builds
+        # without an M3 header miss here on every chat opening, so after a
+        # few misses the root scan (message cells included) is skipped.
+        fragment_class = self._glassify_class_name(fragment)
+        skip_root_scan = (
+            not strong_hint
+            and self._m3_header_misses.get(fragment_class, 0) >= 3
+        )
+        budget = 64
+        for base in (action_bar, None if skip_root_scan else root):
             if base is None or not hasattr(base, "getChildCount"):
                 continue
             queue = [(base, 0)]
             seen = set()
-            while queue:
+            while queue and budget > 0:
+                budget -= 1
                 current, depth = queue.pop(0)
                 key = _identity(current)
                 if key in seen:
@@ -7360,6 +7605,7 @@ class GlassifyPlugin(BasePlugin):
                 seen.add(key)
 
                 if current is not base and self._is_m3_chat_header_view(current):
+                    self._m3_header_misses.pop(fragment_class, None)
                     return {
                         "view": current,
                         "action_bar": action_bar,
@@ -7400,6 +7646,9 @@ class GlassifyPlugin(BasePlugin):
                 "safe_glass": False,
             }
 
+        self._m3_header_misses[fragment_class] = (
+            self._m3_header_misses.get(fragment_class, 0) + 1
+        )
         return None
 
     def _is_m3_navigation_view(self, view: Any) -> bool:
@@ -8095,6 +8344,48 @@ class GlassifyPlugin(BasePlugin):
 
         return overscan
 
+    def _overlay_views(self, data: Any) -> List[Any]:
+        if not isinstance(data, dict):
+            return []
+        layers = data.get("layers")
+        if layers:
+            return [layer.get("view") for layer in layers if layer.get("view") is not None]
+        view = data.get("view")
+        return [view] if view is not None else []
+
+    def _raise_controls_above(self, controls: Any, overlay_views: List[Any]):
+        """Bring controls above the blur overlay only when they are below it.
+
+        Each bringToFront() re-lays out the parent. 0.4.0 called it for a
+        dozen controls on every stories/search refresh, even when the order
+        was already right.
+        """
+        if not overlay_views:
+            return
+        for control in controls:
+            if control is None:
+                continue
+            try:
+                parent = control.getParent()
+                if parent is None:
+                    continue
+                parent_key = _identity(parent)
+                overlay_indices = []
+                for overlay in overlay_views:
+                    overlay_parent = overlay.getParent()
+                    if overlay_parent is not None and _identity(overlay_parent) == parent_key:
+                        overlay_indices.append(int(parent.indexOfChild(overlay)))
+                if not overlay_indices:
+                    # Not a sibling of the overlay: its order cannot change
+                    # whether the overlay covers it.
+                    continue
+                if int(parent.indexOfChild(control)) > max(overlay_indices):
+                    continue
+                control.bringToFront()
+                control.invalidate()
+            except Exception as _suppressed_exc:
+                _note_suppressed(_suppressed_exc)
+
     def raise_dialogs_stories_controls(self, fragment: Any):
         controls = (
             self.field(fragment, "dialogStoriesCell"),
@@ -8111,14 +8402,8 @@ class GlassifyPlugin(BasePlugin):
             self.field(fragment, "floatingButton3"),
         )
 
-        for control in controls:
-            if control is None:
-                continue
-            try:
-                control.bringToFront()
-                control.invalidate()
-            except Exception as _suppressed_exc:
-                _note_suppressed(_suppressed_exc)
+        overlay_views = self._overlay_views(self._top_overlays.get(_identity(fragment)))
+        self._raise_controls_above(controls, overlay_views)
 
     def _remove_top_overlay_for_fragment(self, fragment: Any):
         key = _identity(fragment)
@@ -8603,7 +8888,7 @@ class GlassifyPlugin(BasePlugin):
             # using its accumulated window position.
             self.allow_top_overflow(overlay_parent)
             overlay_parent.addView(fade_view, params)
-            self.raise_top_controls(fragment, action_bar)
+            self.raise_top_controls(fragment, action_bar, [fade_view])
 
             data = {
                 "view": fade_view,
@@ -8756,8 +9041,9 @@ class GlassifyPlugin(BasePlugin):
             self.raise_dialogs_stories_controls(data.get("fragment"))
         else:
             self.raise_top_controls(
-                None,
+                data.get("fragment"),
                 data.get("action_bar"),
+                views,
             )
 
         self.log_once_keyboard(
@@ -8766,7 +9052,12 @@ class GlassifyPlugin(BasePlugin):
             f"(layout offset={int(round(offset))}px)",
         )
 
-    def raise_top_controls(self, fragment: Any, action_bar: Any):
+    def raise_top_controls(
+        self,
+        fragment: Any,
+        action_bar: Any,
+        overlay_views: Optional[List[Any]] = None,
+    ):
         # The blur overlay must sit over messages, but never cover the title,
         # back/search/menu buttons, pinned message or context panels.
         controls = [
@@ -8788,14 +9079,11 @@ class GlassifyPlugin(BasePlugin):
             if fragment is not None
             else None,
         ]
-        for control in controls:
-            if control is None:
-                continue
-            try:
-                control.bringToFront()
-                control.invalidate()
-            except Exception as _suppressed_exc:
-                _note_suppressed(_suppressed_exc)
+        if overlay_views is None:
+            overlay_views = self._overlay_views(
+                self._top_overlays.get(_identity(fragment)) if fragment is not None else None
+            )
+        self._raise_controls_above(controls, overlay_views)
 
     def top_fade_height(self, strength: int) -> int:
         value = max(1, min(100, int(strength)))
@@ -9417,6 +9705,17 @@ class GlassifyPlugin(BasePlugin):
             return None
 
         field_name = str(name)
+        # Fast path: skip getClass().getName() (two JNI calls) for objects of
+        # an already seen Python proxy type. A mismatching Field raises and
+        # falls through to the exact per-class lookup below.
+        fast_key = (type(obj), field_name)
+        fast = self._field_fast_cache.get(fast_key)
+        if fast is not None:
+            try:
+                return fast.get(obj)
+            except Exception:
+                self._field_fast_cache.pop(fast_key, None)
+
         cache_key = None
         try:
             clazz = obj.getClass()
@@ -9443,7 +9742,11 @@ class GlassifyPlugin(BasePlugin):
 
             if reflected is not None:
                 try:
-                    return reflected.get(obj)
+                    value = reflected.get(obj)
+                    if len(self._field_fast_cache) > 256:
+                        self._field_fast_cache.clear()
+                    self._field_fast_cache[fast_key] = reflected
+                    return value
                 except Exception:
                     self._field_reflection_cache.pop(cache_key, None)
         except Exception as _suppressed_exc:
