@@ -112,6 +112,18 @@ GLASSIFY_CHANGELOG: Dict[str, Dict[str, Any]] = {
                 "журнал ошибок — удобно приложить к баг-репорту.",
             ),
             (
+                "Меньше памяти и рывков",
+                "Закрытые чаты больше не остаются в памяти, ползунок не "
+                "пересчитывает их при каждом движении, а главный экран не теряет "
+                "стекло после многих открытых чатов.",
+            ),
+            (
+                "Работа без сети",
+                "Логотип встроен в плагин, iOS Input запускается из кэша без "
+                "загрузки при каждом старте, а неудачные загрузки не повторяются "
+                "при каждой прокрутке.",
+            ),
+            (
                 "Страница расширения",
                 "Статус, проверка файла и требования собраны в одном месте, "
                 "удаление спрашивает подтверждение. Расширения могут "
@@ -175,6 +187,10 @@ _GIT_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 _GIT_BLOB_RE = re.compile(r"^[0-9a-f]{40}$")
 _PREVIEW_FILE_RE = re.compile(r"^preview\.(?:png|jpe?g|webp)$", re.IGNORECASE)
 _EXTENSION_SETTING_KEY_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,47}$")
+# Note: the extension sandbox is defence in depth, not a security boundary
+# (any Java object reachable from the API exposes reflection). Integrity comes
+# from the SHA-256 / commit / Git blob pinning of catalog entries.
+_FORMAT_DUNDER_RE = re.compile(r"\{[^{}]*(?:__|\._)[^{}]*\}")
 
 _EXTENSION_SAFE_BUILTINS = {
     "abs",
@@ -4182,6 +4198,16 @@ class GlassifyPlugin(BasePlugin):
                 and "_GlassifyExtensionAPI__" in node.value
             ):
                 raise ValueError("доступ к внутренностям Glassify API запрещён")
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and _FORMAT_DUNDER_RE.search(node.value)
+            ):
+                # "{0.__class__}".format(api) reads attributes the AST checks
+                # above never see.
+                raise ValueError("служебные атрибуты в шаблонах строк запрещены")
+            if isinstance(node, ast.Attribute) and node.attr == "format_map":
+                raise ValueError("опасный метод запрещён: format_map")
         return tree, metadata
 
     def _validate_extension_metadata(
@@ -4346,7 +4372,7 @@ class GlassifyPlugin(BasePlugin):
 
     def _install_extension_async(self, extension_id: str):
         if not self._extensions_master_enabled() or not self._extension_alive:
-            self._extension_notify("Сначала включите расширения Glassify")
+            self._extension_notify("Сначала включите расширения Glassify", force=True)
             return
         entry = self._extension_catalog.get(extension_id)
         if not entry:
@@ -4595,7 +4621,7 @@ class GlassifyPlugin(BasePlugin):
 
     def _extension_enabled_changed(self, extension_id: str, value: Any):
         if not self._extensions_master_enabled():
-            self._extension_notify("Сначала включите расширения Glassify")
+            self._extension_notify("Сначала включите расширения Glassify", force=True)
             return
         if not self._extension_is_installed(extension_id):
             return
@@ -4806,7 +4832,18 @@ class GlassifyPlugin(BasePlugin):
         except Exception as exc:
             self.log(f"Glassify extensions: unload {extension_id} failed: {exc}")
 
-    def _extension_notify(self, text: str):
+    def _extension_notify(self, text: str, force: bool = False):
+        if force and not self._extension_alive:
+            # The manager is off, so the generation guard below would drop
+            # the message ("Сначала включите расширения" was never shown).
+            def show_now():
+                try:
+                    BulletinHelper.show_info(str(text))
+                except Exception:
+                    self.log(f"Glassify extensions: {text}")
+
+            run_on_ui_thread(show_now)
+            return
         generation = self._extension_generation
 
         def show():
@@ -4869,6 +4906,14 @@ class GlassifyPlugin(BasePlugin):
                 Long.valueOf(int(System.currentTimeMillis()) + 450),
                 pending,
             )
+            # Android 10+ limits activity starts from the background, so the
+            # alarm alone may only close the app. Start the launcher now,
+            # while the user is looking at it; CLEAR_TASK makes the backup
+            # alarm harmless if it fires as well.
+            try:
+                context.startActivity(launch_intent)
+            except Exception as start_exc:
+                self._log_suppressed("start launcher before restart", start_exc)
             Process.killProcess(Process.myPid())
         except Exception as exc:
             self.log(f"Glassify: restart failed: {exc}")
@@ -8410,17 +8455,6 @@ class GlassifyPlugin(BasePlugin):
         data = self._top_overlays.pop(key, None)
         if not isinstance(data, dict):
             return
-
-        layers = data.get("layers")
-        if layers:
-            views = [
-                layer.get("view")
-                for layer in layers
-                if layer.get("view") is not None
-            ]
-        else:
-            view = data.get("view")
-            views = [view] if view is not None else []
 
         self._remove_top_overlay_data(data)
 
