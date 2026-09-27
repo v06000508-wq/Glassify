@@ -13,7 +13,12 @@ extensions/
     <version>/
       extension.py
       preview.webp
+plugins/
+  <version>/
+    glassify.plugin
 ```
+
+`plugins/` keeps every released version of the main Glassify plugin for exteraGram, one folder per version (e.g. `plugins/0.4.0/glassify.plugin`).
 
 ## Version format
 
