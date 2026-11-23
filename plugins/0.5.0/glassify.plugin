@@ -50,9 +50,10 @@ __description__ = (
 )
 __author__ = "@VladSamsung"
 __version__ = "0.5.0"
-__build__ = "20261123.15"
+__build__ = "20261123.16"
 __link__ = "https://github.com/v06000508-wq/Glassify"
-__app_version__ = ">=12.9.0"
+__min_version__ = "12.10.6"
+__app_version__ = ">=12.10.6"
 __category__ = ["appearance"]
 __sdk_version__ = ">=1.4.4.3"
 
