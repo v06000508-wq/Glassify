@@ -45,7 +45,7 @@ Glassify verifies each downloaded extension against the SHA-256 hash declared in
 ## Available extensions
 
 - `ios_header` 1.2 — compact iOS-style chat header with native Liquid Glass, centered title/subtitle handling, avatar-aware layout and full stock-state restoration when disabled. Requires Glassify 0.2.1+ and exteraGram 12.9.0+.
-- `liquidglass_plus` 1.3 — five Blur3 surface materials (`Clear`, `Frosted`, `Crystal`, `Satin`, `Deep Glass`) with adjustable inner glow and depth. The top chat-header blur remains Frosted and is not changed by the selected surface type. Requires Glassify 0.2.1+ and exteraGram 12.9.0+.
+- `liquidglass_plus` 1.3 — five Blur3 surface materials (`Clear`, `Frosted`, `Crystal`, `Satin`, `Deep Glass`) with adjustable inner glow and depth. The top chat-header blur remains Frosted and is not changed by the selected surface type. Requires Glassify 0.2.1+ and exteraGram 12.10.6+.
 
 ## Security model
 
