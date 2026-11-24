@@ -1624,22 +1624,8 @@ class IOSHeaderRuntime:
         self.rebuild_current_fragment_views()
 
 
-def _require_exteragram_release(api):
-    required = GLASSIFY_EXTENSION["min_exteragram"]
-    try:
-        loader = api.find_class("org.telegram.messenger.ApplicationLoader")
-        context = loader.applicationContext
-        package = context.getPackageManager().getPackageInfo(context.getPackageName(), 0)
-        version = str(package.versionName or "").strip()
-    except Exception:
-        raise RuntimeError(f"Не удалось проверить версию exteraGram. Требуется {required}.")
-    if version != required:
-        raise RuntimeError(f"iOS Header 1.4 требует exteraGram {required}. Установлена {version or 'неизвестная версия'}.")
-
-
 def on_load(api):
     global _API, _RUNTIME, AndroidUtilities, View, ViewGroup, Gravity, Theme, TextLayout
-    _require_exteragram_release(api)
     _API = api
     AndroidUtilities = api.find_class("org.telegram.messenger.AndroidUtilities")
     View = api.find_class("android.view.View")
