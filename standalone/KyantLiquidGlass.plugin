@@ -1,0 +1,541 @@
+"""Standalone Kyant Liquid Glass for exteraGram.
+
+The embedded lens is adapted from AndroidLiquidGlass (Copyright 2025 Kyant).
+Native source: https://github.com/v06000508-wq/Glassify/tree/a9088de/extensions/kyant_liquid_glass/1.0/native
+The standalone package applies standalone/native-extera.patch on the
+codex/kyant-liquid-glass branch and builds with the exteraGram 13.2.2
+hook-core 1.0.0 classes.jar. The Apache 2.0 license is included below.
+"""
+
+import base64
+import hashlib
+import threading
+import zlib
+
+from android.os import Build, Handler, Looper
+from base_plugin import BasePlugin
+from dalvik.system import InMemoryDexClassLoader
+from java import dynamic_proxy, jarray, jbyte
+from java.lang import Object, Runnable
+from java.nio import ByteBuffer
+from org.telegram.messenger import ApplicationLoader
+
+__id__ = "kyant_liquid_glass_standalone"
+__name__ = "Kyant Liquid Glass"
+__description__ = "Liquid Glass для нижней панели и кнопок. Требуется Android 13+."
+__author__ = "Glassify • шейдер Kyant"
+__version__ = "1.0"
+__min_version__ = "13.2.2"
+__category__ = ["appearance"]
+
+_CLASS = "glassify.kyant.LiquidGlass"
+_DEX_SIZE = 34764
+_DEX_SHA256 = "69b1d2950ba90a1ebd99852fff2170e343e2ac284b6a74eb205c107625927d14"
+_DEX_B64 = (
+    "eNrNfXlg3FW1//l+Z81km0ySpk23aRpoWtps3RKSLmnS0DTplky3tKWdJJNk2mSSzCRtIlsphRbc2ISi+MQnhaKIvGdFVFSk"
+    "WIosIqLie6iAqOjjad0QFenvc869M/lOmhSff/0aPt9z7jl3X849935nmI7QsKd0YSX98rf+vxyO3LH1UO3tL7qev/PXPT/4"
+    "+Nd/d/RI2rNHiPqJaHjLIh/pf+/eQOQxlbwNOOYm2g/q9xANgZ7IhN4g2phNlIPwPVOJHgxDP4No3gaiBUApsBioAlYBe4AY"
+    "8BHgXuCbwBvAe0DWRqQDlgObgb3A9cAnga8APwTeAsxNRNOBSmAr0AtcD9wNfAn4HvBrwGgmygPmAauAXcAh4G7gC8C3ge8D"
+    "bwJmC1EuMAcoAyqBZUAt0AC0ADuANqATuA64Afg48G/Ag8DXgKeA7wDPA98Hfgz8BHgbSAkQFQBlwCKgAlgGrALWAE1AM7AZ"
+    "2A7sATqAMNALRIEDwDXA9cCNwIPAU8CbgG0z0WygFogAtwCfB54DfgV4tkAP1AN7geuATwLfAH4CnGP9VvQ/0AFcB9wJfBE4"
+    "A7wOOLcRzQJiwOeAnwP524nWAQPAHcAjwI+Bd4CcVrQLuAL4DPAd4BXAvgNlATuA24BngP8BUncSXQI0AvuADwKfA54BzgK5"
+    "u9BvwC7gauBu4CvAM8CrwB8B5+VEM4ElQAPQC9wGPAK8ALwOvA34d6OtQDMQBo4C9wNPAL8H0vcQzQVWAluBXuAG4FPA48D3"
+    "gFeBs8A7AAWJHEAqkAVMAaYBfuAiYD6wBFgJXAZsBALA5UAb0AX0AkPAlcC1wFHgNuBe4HPAw8BJ4MvA14AngNPAM8D3gJeA"
+    "l4FXgLNcHyxcD+ADZgKFQDmwGmgCdgMHgGPAV4DngZeAV4HfA452oknAxcB8YBGwBtgGXA70AB8ADgE3AbcBnwA+DTwAfBl4"
+    "HHga+CnwB8Degb4B/EA5UAGsAjYA24AQcAC4CfgM8A3gO8DLwFngH4AtRJQGTAHmAFXACqARaAZ2Am1ABBgBPgwcAz4DfBH4"
+    "BvAc8ArwFvA34Bxg70S+QDYwCygHLgXqgXXAFmAH0APsB64HbgHuBr4MfAt4DngFeAt4G3B3EU0FioGVwFpgM7ALiAAjwI3A"
+    "x4AHgJPAN4HngJeBnwN/BlzdGEcgHygGKoDLgE3AVmAX0AVcC/wb8BhwGvgh8AvgD8DfgRTY6CwgDygAioBFQBVQD7QArcBe"
+    "4ABwHXAb8Bngc8C3gB8Avwb+APwDyNmL9QyUAEuAdcA2IAT0ASPAdcCHgbuBB4H/BB4FTgEvAa8DbwG/B/4KvAfY9qG+QCaQ"
+    "C0wHLgZKgFXAWqAZ2Al0An3AzcBzAPVgngMfBh4DXgHeA2b0Yp4AAWAnsBcYAIaB64EPAXcBDwBfBp4Enga+B/wc+DPwHpAe"
+    "QX2Ai4D5QBlQATQAW4DLgQ5gABgGrgaOALcCdwNfAE4Cp4DvAj8GfgP8CXD0YQ4C84FqoAHYDHQCA8BB4IPAJ4D7gJPAk8Dz"
+    "wE+BN4G3gXRs3tnARcACoBKoATYCO4EQ0ANcB3wEuAu4F/gC8CjwDeAM8ALw38CvgP8F/gD8FTAGMD5ADjATmANUXo09CFgL"
+    "tADbgZ1AGOgHYsB+4DWgAsO0HLgMwHZB2BoI2wDB1BNMOcFME0wxafMqfghMCMEEEJYrYXkRlgZhWhOmIWHKkB56whARupLQ"
+    "DeLDoGoUBWLAICkfhv2ZA+z3ACPAB4ArgCuBqwBUka4BDgLXAoeA64DDwPUA3CY6CtwI3AR8EPgQ8GHgI8BHgZuBW4BbgduA"
+    "24GPAXcAd7JfBdwFfBy4G/gk8Cn2p4BPA/8OfAa4FzgO3Afcz/4X8ADwWeBzwIPAQ8AXgIeB/wD+EzgJfAn4MvAt4EfAT4Gf"
+    "Aa8CrwGXap+vrkmNh6HDKzTfBPlKzQfAr9L8Tgvf0aTG0dRp12ie0zZovgf8Ws0Pgm/U/JXgmzTP+azT/FHw60EdOk+4OeTh"
+    "PoQcbhtl6XzgFooPejf4Fs2fAL9Z8w9b+Ed1npN1ni2af1zLp2g58/mahztJ04EzOs5MSxy/5uHCUoFub4vm54OHW0WFwAta"
+    "zvyrOp+LLGkv0mm5nguAN5tUucWWcpfp+Nt4rICzWr7a0hbm39Hyekv+a3T+63W94/HX6z7fHJevG+Xd60bjcJ5bNe9dp2iz"
+    "pR8Cmt+s+Wk6bcBSn606zlaNQl0W86U6z+2WPFs1/y1tE/jfE5rntpzSPM/JJzVfgXy+rfk68Kc1vw38U5rvAX9G88Pgn9Y8"
+    "9/MLmj8K+TOavxn885o/Bv5FzZ8A/33NP7ZuNO0rlrRvWPi3LPyfLPy74L+refv6Ud67fjTONAtfaOF3Wuo8f/0ov8jCV1v4"
+    "OvA/iPehJZ+ARb4T/HOa77DE6bfwwxb+oIU/Cv6leL9Z5Hdb+HstfIel/jz34nV40BKH58+zmj9pqdtj60fH5YyljS9b0r4K"
+    "/nuaf9MiX4Q8f6h5Xkc/0nsO/3tZ8zzHfqz5PyHtf8fjbBjl3eBf0bwX/H9pfpqFL7Ty60f5gIXnfkjDXw0p+jXQDPwtAfXB"
+    "Gv5d06OGol/T9C+g2bDArGd6VIe/pinr8/C3WOyZQZMRno/d9Lc8X7DK/oxwGaXQd4ipQe8IzZSzfRksZkToJLpRaC7dLjSd"
+    "Pmeo+A8L3UX/ocP/KdRDj2n5q6DlsATzQatR33MG27FselfsmUHTJOyhoKHCbUJNatfhDqGpdELobHpIaCF9QetPCl1Oj+t0"
+    "3xI6mZ4QuovOCC2jXwttIdPkPc5HDxhM19MbQk16W6hBTlNRl8n732zZ3FagPEOoqu8K5NutaVhoGfVq+qDQbPq8odI/pNN/"
+    "QaiqJ6d7U8f7rc73j5r+VdO/6Xh2k/dYk6pI0Wqhm2QvYPoVTb+q6deFBuis0Fb6k9DV9Fcd/ofQZZRjMJ1CuYYKTxK6i/IM"
+    "lX66pjM0nWmofBbocLHQrVSqabPW7xK6jXp0vBs0PaLz/6CO9yEt/7BOf4emd2r6WU0f1fG+odN9U9Mntfzbmp7W9Cmd7hea"
+    "/krLf6PDb2n6vzqf32n9WUP1z++1/k+gtejPctlrV9M3ZA9V1AYv83/ZVtMcWmmwf5JHdaBOeJmpQldSgdB1dLHQaioS2qjp"
+    "PrpCx/uKUKfMWydG+ZTQS+ldUDc85BK2MVRJP0I4BR5WifhAy4Sman0q5ssG6NORH4fTIU+RsJNqhObQJq1/VmguvSx0Of1Y"
+    "aCW9InQN/QQ0U+ebCa/sl6TCX4XcixlZInaoQtN9NCJ2RoXZ3pja7tg07RJ6KfUJjcevoqeFNmi6VtMKel6nc5jsr3kp02Dq"
+    "I6/QLMoSmk0+0FycCLjcXNTwL0Ir6BKR99L3hUbpB6CTdLxJOD18V8IdmoaETkE/VQitoBjoVNhfG8qfBvlSg6lBOzTdabAv"
+    "OIkqhWLENL1M6BRaJzSf1gtNp41av0XT7Zq2ClX5Tk/kW0FRofvogKYf0PQg6Axd7gzYt+VCnbRC08s0bRWq8pkJz7gJdLYe"
+    "n9koZ5uEK+lnBvui20ReiJb9Smgl/UZoBb0ndCZtlnhT6XtCZ9B/GeyrVkq6i5Dfagn76TlN/1v2lwXUKHQfdQrtpBeF7qYf"
+    "GuzfVtA/DPZtVb1KaBbtM5gW037QUqw8v+wfFeL/lul4ZVh/Sl5H5bKvdIm8HOv1GMILdbyFODH+nPd4HV6kw4t1eDG8zDdB"
+    "l+jwEoT/DLpUh5dqfYUOVyTCKl6llldqeaWWX6rll+pwlQ5X6XjVen1WJ8Iq3jI4FCVCIzRH9qlV0r5l2P+Den+8Reheeklo"
+    "Pf1d9iuV/3KcmhVV/bYcp9wvy/4REPkKnIAvknAfzRU6qPenLfSC0E30jsFnPJXfSp3fSl1Ppr/W9M+avi37SKmczVahx5xC"
+    "LyKXDruFzobNYjpJzm0cThW6DytMpU/XNEPTTE29QhfKGY+pT8uzNc3R8lxNJ2map+lkHW+KpvmaTtV0mo43XdMZms7U1K/j"
+    "zdLtKdDy2XofLRS6Xs5tHL5Y6F7sCEx3U5FQO80VejnNE7qZLhHqxlpgOl3Oeqv0PF+l+5/T/06nnyb7UQHNMlQ+hULLqETo"
+    "TtprqHT9mg4YqpxBoS10ndBmOiy0m64Xuog+KrSGPq7T3W2oen1S79NfNlT9fin7oKpXHcbtb0LhD5l81iynVQbTxVSr6Vqh"
+    "Q3SVwefPi+kmg/dNgxYK7aGrhRZJ+nXwZ15Xbj+d03SRwdRGHxGaoqmNbtZhRV30dYPPiKpeLegvRefSEoPPnPM0HaJLhTqo"
+    "XmgqrRG6l74jNEjPGHwGLaFlBp9D59OQUKXfpvPfhnx+QSrsFrnax7bBchwy+My6j0JC59JtBp9bVbpWHb8V6dOEhmmxUFW/"
+    "VsyGL4q9I970E+dyPtvbryf62kEVLuOzBSXrp0F/SuvZR8nyKj3fOVTqeH/U+oUW/SKL3n6toosm0Pu0fqVEVncR/O8THA/l"
+    "+7V+MVniaX0A+jqtXzKOvgf6Zq1fOoF+j9ZXjKO/EvqI1leOo78b+oNaf+kE+d+u9VXj6B+D/l6trx5H/xL0J7V+2ZjxYf2f"
+    "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"
+    "TiMT3vpGrG7e3S/jHdReKTfdq4Svhs0uyop46yU04P8drZRa1IgfMOD/X5xTPebLhmEUfYQSPsD/rFWf6zzfr6pICi0d42VV"
+    "J3lZlUmh5Uk+Vzm8LBVin+tSyjUfv2b7qhVxb8vcvmoR7axfhlPDyhW55sHlubYzyttqT3PuqF9IOc6chy6D/82eWI5JBwvq"
+    "BjY+TZva2Ber0j6T8kn5Moj33s3eJbSwlHewndlLUM5TGO8M+Xy+ipeCeBfLuC/jlY4zfwXsdLk3hXyzyr2YM2XlXk7to53+"
+    "xVRk2zlrMeIul7jb/SvBrxALsb2wRu4obZY73SmN8X09rO8ux+73n0jIWTOjkcSPjPg/KTcF6cQ3KWrfJf3u0jA32DfaKZHm"
+    "okSaT71vGsPy/tUm301ZL+9gHfKn/jEdCPyEvOVpomNPhH3Q+ShnjrxnVV6ynwrMQnDb0TMR/+XUjJG9iHyOfv8eeNARfzvm"
+    "C99OtVGN0N2IV2CUI8UA8R1/K8IwE+fVqZ02yj4Zvyv6qr5rL6BqpD2CNmYl+jdRX+9z4sFlyvc6lK5aj3/Eu1rf3phCm4FM"
+    "Gq8v1kl7z5dvEHn8TidRpv+/2aeRvGxat6pRff8il9T7JD9mNL/je0u4XLqm9oypzzjmqzjJ5RC/GfqS8cisTOP8chsnqE/D"
+    "BPJNE8ibJ5C3TCDfPIG8dQL5jgnk7RPIOyeQd00g755A3pc0Lg2JdfAaeeXuLuJ/R2bLeGm3TCDfOoF89wTyPRPIgxPI2yaQ"
+    "hyeQ751A3jOBvHcC+YDIbfJHtCneV6WvYzdUffXuhH21dgJ50wTyfi03kuRhrK+MceXrJ5BvGFe+F/Yhw7LO47Z0wPusWL3z"
+    "5d+dQP6Slqs2tDaq70sV0DbY5X9IDbYj1IqQ3eBQf1JobVKoKalOwcbkd3n8jojrHmpU34Nqwy7L73dK4+feDW10ueWOegZO"
+    "xvViAfitkE3s5xtibSR2BfcxvxsrlTMVf8plBbWZ++SNBO/r/aUfozKT7zhLDR6/eC4FprLd8Guh85ptOIVj7Pl9lqHjIG6V"
+    "WM0A35aij2zyLlLVf6iRxN61007UJA22rp7yjVp58+81fb695k69t6o7s6sa1T7Uhp4cKH2ZZtnTjAH/Xr0zvCf7lUOPxw2N"
+    "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"
+    "N6Ppya+fPWqLlhebrpi6QsWYSzhXSMI/je9CKaMvqVNG30unDAbb9PJgVi9IV/wFtV3eSbv5KbbAOSgXHYib2PE8g93hmBov"
+    "ROepZRvEanEMsguPBEy2aQoPCCMaicl0UGyPGPchuaymj+YPqbniV/3o1+ecKo8nrhB3uNzPXVg1Vqi2jzHiRX7LGWmMzj92"
+    "zU6sV6t8rN5ylBmrGue0h2bobMWI1AwW6Yqr02UIDjVODfPj9eZY4bn+Kzx+/At3+ouSohUP+5cv85cWl8ZjjB9rxF+tY0VD"
+    "WA4RlWvxSFUiTagnFkpWfkApr1KqfyH34QvlfkDn7rkq3h0xtT2FxB4l+sTSF+X+7mBPZwvGfL7f2oPxpieS8EBLzfzL/Jiz"
+    "RZLJXP8Cf1E8A/AqdpHOYm7VaBZ+TP4YLBRSw/3pGuwugi9TZMl2vjSWM1SprWnheKqkcHnGpisenm+tXfHIXJWTSq+7J174"
+    "JTqrqkQPlfvZtW75/6CbZApY26Unof/KK5MbOM7k1M1kbzZe4jz/+D3sL/Gz/IKDIKS0tCxetfOmq+oC7rltaGdsMNSfVPWR"
+    "5CEZnlt14Zrq/pD85vvL0OYFKvO5503o9nC0vSe0LtivRsk/HO8GnbFKHBuIDhYpdhj5cwWQA4/AIj9700lDPGYME+O0TEwh"
+    "kpcWL65KGmXrQkU01RBMLmUlebTjmVhnsRpuxE/YqDHGyWJNUWFLyhiXkryUxyQdnZ16Uo3OqQVIjRkz1h6PM330llAcwulN"
+    "D068//kpteAVGOuILzFLHVk5Ojiq77noknFKnjeO9U+eVs3xvuLydMfNw+Auni+SeHN58Sf4kSSDU+6PIPn5i3vCjhstdi6G"
+    "0rL9oODkEU9aQUmq0ZWTVBPOGpWJJKeMWGNbo+vOGZ1g8fnVgapwXhaDcf5WOHbfSBrV5KyTDDRfEIaiMeTQwAn4QpGLHqcA"
+    "mJbzNswxfYTBQGMt44QIEw6ULnm0vfF2goxTK91ZajW3s6+MJBIqssxKpUZ9pP8m7ALu1aTiddUk3+Ko/xJeOR1gSvwL42ZA"
+    "6YJxXRC6pcWlSeX2Rdnh/j8WzR1bjoXDRZXOPb8iKtPx6tJlUXfFqzOmqlo9Xm1HQj09fQf+hdqWXaC2KtMJa6vVXRN0rFaP"
+    "V9uuaCgUuXBl555XnCSasDSlHa+w9pHg+5QFO/dPd4xUhbMcryZtCWWbSnteNUU5Xi3bcEL6F2o5wWSTinCWE1ZElONVpH8o"
+    "imPz/7Eq588dlY3MnTFTuc2inqh2Wp1cv4Q1RDT2BsiNmhXuk9uB/XLCdAnZ0El2/gwZGQco9UAwVhd/GeI4IGdVY5iMEQpf"
+    "fXVdxRUF/JYNx+SCSws6QsMF8wva+3Be7xEruaC3ryMERRSnxWAsBGV3MLZAXl3FhnpjBZd2BuFTzS/AdrYg2B8uuHThwvkF"
+    "+5WpQ7KK4rLS4vKygqvoa8bVVzcnldXe+a8V1d+1oDfYvyDMeSwNLlrcsah0aWVlsH3h0o7Fi9qXLO3A35LS8iVtixd1lFeG"
+    "FnZ0LKxYujBUXl7RuThYVr64vL2zfDESVoY6y1BItCJecOdQT0/BmNqXF5ctQu3NS4yD9mnG5A3mxWAml5lF5htGodt5qy1v"
+    "oTlX6UqVbpXSeezQPW7OgSj/+yKy0622GUrwoiLPm/M4qS3v83mxvFIVKR/JFo2yj42y31SxnXmU9295Zt5n84y8h5TInRD9"
+    "BNSW9x9jxYdFYY8X98W861CcBOx5j6DsO+JBB4J9Up0yq/72uN7kDFWD7ZOXTV4+ecVk+dXZnmvdZKSaZma+1zR8hmnwU1H5"
+    "6z160H5PtXHwoP3l6j56eJlBJ+rIMIypt/gHrr3H/s6aaNbtDcjHiCH0cMNg1hkJDSH0ZsP+rINriUz7J4xDB+2PDRkH77G/"
+    "NPRJg87ebBhZbw1p5p79nOIAirhn7TA9tpZDIwi9sfYDdLCRQ1cgdKbxSnqDQ+ZVCB1ruppONhl07zqWHOT6PbvhWoPe3IAK"
+    "buQ017HshU2HDXprE4ev5/BLLTeg0BYEzWm3+o+w6LHNRw16ZbNBj20lr+mY7jW8ia8AeQ0V8o6Gb+I0t++xe+7d/UGD7t5l"
+    "0INBg17eYdLhNhTfRg7TXJDI4RZpeIgb/kboNsN4N2TQS+2UZTjK43nHSxn902k/xiW9Fb3DoHu6DHohjNz7DXp00KBXB0to"
+    "GdXmG6N/ngTG/5tYM0HsTxtn/Ec/gMc7V+NxdgSPm6/B49VhPF7azwrm3jyAxz0c71F+vMCPN/nx7JV4vMGPg1fgcYwf73Lw"
+    "9qvweJAfT/LjYVac4cer/HiHH6+w4k/8+BAXfi8/bua0J7gGj3HwceZe5sdZfhw9aHA95Hk31+tRYV+Q581c+bf2G5jJb0Jw"
+    "7UH7yWsNw/MsPx4dNjwHgQ9dh8CJK42bjMeYe5MfB6/nxxHDOOo/Kc+Hj/LzJTxvMl662kh5F1zK4ZsQ68ERw3PzB8EcPcBD"
+    "F538U1kxNxvODv7/jdX9/Z2/LL3cWLrbWLrHyKs3lr6nvmP1qWvU96xOgH7hGvU9qa9p2ZOgz2j+R6A/1fybFv53mud0b1vS"
+    "2Q6O8hkWformCw+Olr3Uwq/XPOcXOqhoVNNrNb1V009r+iDoysOj318k/RvhFZA1jZH3aXlAy+PfZP6kln9K0z1j0g2Pkcf/"
+    "7RmTz9U63jVj4sf112r5IU17xpRzg5YPj0l3VMtv1PRDh0e/q0n6e3iHD6vfKGf9sTHpb9Py2zW9d4z+Di2/U9N3D6v/J1T8"
+    "69f8u95vHFb/3/g/HVa/5/3WYfX7zxzepin/vvNLh/Vv6h5W/492piFNI5ry/7f1lcPqd3+5PP5t34cPq9/yPXNY/QYzy7+v"
+    "Kf9m72OH1e/1cvgVTbMouf8M+T/pqfxN/Zvyx9zqu6n8e/B+j/oeIf8+/IlM9Z1D/i3cjdnqO5v8u3P3TEU+fvX/kPXPQFq/"
+    "+g0m/v0kw6t+x4x/h8v0q7LmbUCefpLvh/Lc5R+X4+9k8u97Ofz6O5Soq82r8ud6O/0k3zHl3wHjH2/ier+Lwf9/kvLzuA=="
+)
+
+
+class _UiTask(dynamic_proxy(Runnable)):
+    def __init__(self, callback):
+        super().__init__()
+        self._callback = callback
+        self._lock = threading.Lock()
+        self.done = threading.Event()
+        self.error = None
+
+    def run(self):
+        with self._lock:
+            callback = self._callback
+            self._callback = None
+        try:
+            if callback is not None:
+                callback()
+        except BaseException as error:
+            self.error = error
+        finally:
+            self.done.set()
+
+    def cancel_if_pending(self):
+        with self._lock:
+            if self._callback is None:
+                return False
+            self._callback = None
+            return True
+
+
+def _on_ui(callback, *, cleanup=False):
+    main = Looper.getMainLooper()
+    if Looper.myLooper() == main:
+        callback()
+        return
+    task = _UiTask(callback)
+    if not Handler(main).post(task):
+        raise RuntimeError("Не удалось запустить задачу в UI-потоке exteraGram.")
+    if not task.done.wait(4):
+        if not cleanup and task.cancel_if_pending():
+            raise RuntimeError("UI-поток exteraGram не ответил при запуске.")
+        if cleanup:
+            return
+        # A started activation owns the native hooks until it finishes or rolls back.
+        task.done.wait()
+    if task.error is not None:
+        raise task.error
+
+
+def _native_method(entry, name, count):
+    for method in entry.getDeclaredMethods():
+        if str(method.getName()) == name and len(method.getParameterTypes()) == count:
+            return method
+    raise RuntimeError(f"Во встроенном DEX отсутствует метод {name}.")
+
+
+class KyantLiquidGlass(BasePlugin):
+    _stop = None
+
+    def on_plugin_load(self):
+        if self._stop is not None:
+            return
+        if int(Build.VERSION.SDK_INT) < 33:
+            raise RuntimeError("Kyant Liquid Glass требует Android 13 или новее.")
+
+        dex = zlib.decompress(base64.b64decode(_DEX_B64, validate=True))
+        if len(dex) != _DEX_SIZE or hashlib.sha256(dex).hexdigest() != _DEX_SHA256:
+            raise RuntimeError("Повреждён встроенный DEX Kyant Liquid Glass.")
+        context = ApplicationLoader.applicationContext
+        if context is None:
+            raise RuntimeError("Контекст exteraGram ещё недоступен.")
+
+        signed_bytes = [byte if byte < 128 else byte - 256 for byte in dex]
+        buffer = ByteBuffer.wrap(jarray(jbyte)(signed_bytes))
+        loader = InMemoryDexClassLoader(buffer, context.getClassLoader())
+        entry = loader.loadClass(_CLASS)
+        start = _native_method(entry, "onLoad", 2)
+        stop = _native_method(entry, "onUnload", 0)
+
+        def activate():
+            start.invoke(None, jarray(Object)([context, None]))
+
+        _on_ui(activate)
+        self._stop = stop
+
+    def on_plugin_unload(self):
+        stop = self._stop
+        self._stop = None
+        if stop is not None:
+            _on_ui(lambda: stop.invoke(None, jarray(Object)([])), cleanup=True)
+
+
+#                                  Apache License
+#                            Version 2.0, January 2004
+#                         http://www.apache.org/licenses/
+#
+#    TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+#
+#    1. Definitions.
+#
+#       "License" shall mean the terms and conditions for use, reproduction,
+#       and distribution as defined by Sections 1 through 9 of this document.
+#
+#       "Licensor" shall mean the copyright owner or entity authorized by
+#       the copyright owner that is granting the License.
+#
+#       "Legal Entity" shall mean the union of the acting entity and all
+#       other entities that control, are controlled by, or are under common
+#       control with that entity. For the purposes of this definition,
+#       "control" means (i) the power, direct or indirect, to cause the
+#       direction or management of such entity, whether by contract or
+#       otherwise, or (ii) ownership of fifty percent (50%) or more of the
+#       outstanding shares, or (iii) beneficial ownership of such entity.
+#
+#       "You" (or "Your") shall mean an individual or Legal Entity
+#       exercising permissions granted by this License.
+#
+#       "Source" form shall mean the preferred form for making modifications,
+#       including but not limited to software source code, documentation
+#       source, and configuration files.
+#
+#       "Object" form shall mean any form resulting from mechanical
+#       transformation or translation of a Source form, including but
+#       not limited to compiled object code, generated documentation,
+#       and conversions to other media types.
+#
+#       "Work" shall mean the work of authorship, whether in Source or
+#       Object form, made available under the License, as indicated by a
+#       copyright notice that is included in or attached to the work
+#       (an example is provided in the Appendix below).
+#
+#       "Derivative Works" shall mean any work, whether in Source or Object
+#       form, that is based on (or derived from) the Work and for which the
+#       editorial revisions, annotations, elaborations, or other modifications
+#       represent, as a whole, an original work of authorship. For the purposes
+#       of this License, Derivative Works shall not include works that remain
+#       separable from, or merely link (or bind by name) to the interfaces of,
+#       the Work and Derivative Works thereof.
+#
+#       "Contribution" shall mean any work of authorship, including
+#       the original version of the Work and any modifications or additions
+#       to that Work or Derivative Works thereof, that is intentionally
+#       submitted to Licensor for inclusion in the Work by the copyright owner
+#       or by an individual or Legal Entity authorized to submit on behalf of
+#       the copyright owner. For the purposes of this definition, "submitted"
+#       means any form of electronic, verbal, or written communication sent
+#       to the Licensor or its representatives, including but not limited to
+#       communication on electronic mailing lists, source code control systems,
+#       and issue tracking systems that are managed by, or on behalf of, the
+#       Licensor for the purpose of discussing and improving the Work, but
+#       excluding communication that is conspicuously marked or otherwise
+#       designated in writing by the copyright owner as "Not a Contribution."
+#
+#       "Contributor" shall mean Licensor and any individual or Legal Entity
+#       on behalf of whom a Contribution has been received by Licensor and
+#       subsequently incorporated within the Work.
+#
+#    2. Grant of Copyright License. Subject to the terms and conditions of
+#       this License, each Contributor hereby grants to You a perpetual,
+#       worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+#       copyright license to reproduce, prepare Derivative Works of,
+#       publicly display, publicly perform, sublicense, and distribute the
+#       Work and such Derivative Works in Source or Object form.
+#
+#    3. Grant of Patent License. Subject to the terms and conditions of
+#       this License, each Contributor hereby grants to You a perpetual,
+#       worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+#       (except as stated in this section) patent license to make, have made,
+#       use, offer to sell, sell, import, and otherwise transfer the Work,
+#       where such license applies only to those patent claims licensable
+#       by such Contributor that are necessarily infringed by their
+#       Contribution(s) alone or by combination of their Contribution(s)
+#       with the Work to which such Contribution(s) was submitted. If You
+#       institute patent litigation against any entity (including a
+#       cross-claim or counterclaim in a lawsuit) alleging that the Work
+#       or a Contribution incorporated within the Work constitutes direct
+#       or contributory patent infringement, then any patent licenses
+#       granted to You under this License for that Work shall terminate
+#       as of the date such litigation is filed.
+#
+#    4. Redistribution. You may reproduce and distribute copies of the
+#       Work or Derivative Works thereof in any medium, with or without
+#       modifications, and in Source or Object form, provided that You
+#       meet the following conditions:
+#
+#       (a) You must give any other recipients of the Work or
+#           Derivative Works a copy of this License; and
+#
+#       (b) You must cause any modified files to carry prominent notices
+#           stating that You changed the files; and
+#
+#       (c) You must retain, in the Source form of any Derivative Works
+#           that You distribute, all copyright, patent, trademark, and
+#           attribution notices from the Source form of the Work,
+#           excluding those notices that do not pertain to any part of
+#           the Derivative Works; and
+#
+#       (d) If the Work includes a "NOTICE" text file as part of its
+#           distribution, then any Derivative Works that You distribute must
+#           include a readable copy of the attribution notices contained
+#           within such NOTICE file, excluding those notices that do not
+#           pertain to any part of the Derivative Works, in at least one
+#           of the following places: within a NOTICE text file distributed
+#           as part of the Derivative Works; within the Source form or
+#           documentation, if provided along with the Derivative Works; or,
+#           within a display generated by the Derivative Works, if and
+#           wherever such third-party notices normally appear. The contents
+#           of the NOTICE file are for informational purposes only and
+#           do not modify the License. You may add Your own attribution
+#           notices within Derivative Works that You distribute, alongside
+#           or as an addendum to the NOTICE text from the Work, provided
+#           that such additional attribution notices cannot be construed
+#           as modifying the License.
+#
+#       You may add Your own copyright statement to Your modifications and
+#       may provide additional or different license terms and conditions
+#       for use, reproduction, or distribution of Your modifications, or
+#       for any such Derivative Works as a whole, provided Your use,
+#       reproduction, and distribution of the Work otherwise complies with
+#       the conditions stated in this License.
+#
+#    5. Submission of Contributions. Unless You explicitly state otherwise,
+#       any Contribution intentionally submitted for inclusion in the Work
+#       by You to the Licensor shall be under the terms and conditions of
+#       this License, without any additional terms or conditions.
+#       Notwithstanding the above, nothing herein shall supersede or modify
+#       the terms of any separate license agreement you may have executed
+#       with Licensor regarding such Contributions.
+#
+#    6. Trademarks. This License does not grant permission to use the trade
+#       names, trademarks, service marks, or product names of the Licensor,
+#       except as required for reasonable and customary use in describing the
+#       origin of the Work and reproducing the content of the NOTICE file.
+#
+#    7. Disclaimer of Warranty. Unless required by applicable law or
+#       agreed to in writing, Licensor provides the Work (and each
+#       Contributor provides its Contributions) on an "AS IS" BASIS,
+#       WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+#       implied, including, without limitation, any warranties or conditions
+#       of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+#       PARTICULAR PURPOSE. You are solely responsible for determining the
+#       appropriateness of using or redistributing the Work and assume any
+#       risks associated with Your exercise of permissions under this License.
+#
+#    8. Limitation of Liability. In no event and under no legal theory,
+#       whether in tort (including negligence), contract, or otherwise,
+#       unless required by applicable law (such as deliberate and grossly
+#       negligent acts) or agreed to in writing, shall any Contributor be
+#       liable to You for damages, including any direct, indirect, special,
+#       incidental, or consequential damages of any character arising as a
+#       result of this License or out of the use or inability to use the
+#       Work (including but not limited to damages for loss of goodwill,
+#       work stoppage, computer failure or malfunction, or any and all
+#       other commercial damages or losses), even if such Contributor
+#       has been advised of the possibility of such damages.
+#
+#    9. Accepting Warranty or Additional Liability. While redistributing
+#       the Work or Derivative Works thereof, You may choose to offer,
+#       and charge a fee for, acceptance of support, warranty, indemnity,
+#       or other liability obligations and/or rights consistent with this
+#       License. However, in accepting such obligations, You may act only
+#       on Your own behalf and on Your sole responsibility, not on behalf
+#       of any other Contributor, and only if You agree to indemnify,
+#       defend, and hold each Contributor harmless for any liability
+#       incurred by, or claims asserted against, such Contributor by reason
+#       of your accepting any such warranty or additional liability.
+#
+#    END OF TERMS AND CONDITIONS
+#
+#    Copyright 2025 Kyant
+#
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+#
+#        http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing, software
+#    distributed under the License is distributed on an "AS IS" BASIS,
+#    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#    See the License for the specific language governing permissions and
+#    limitations under the License.

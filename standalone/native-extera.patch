@@ -1,0 +1,134 @@
+--- a/extensions/kyant_liquid_glass/1.0/native/LiquidGlass.java
++++ b/extensions/kyant_liquid_glass/1.0/native/LiquidGlass.java
+@@ -138,32 +138,54 @@
+         fabSub = field(fab, "isSubButton");
+     }
+
++    // exteraGram's binary hook API exposes public callbacks with no checked exceptions.
++    private abstract static class UiHook extends XC_MethodHook {
++        @Override public final void beforeHookedMethod(MethodHookParam param) {
++            try {
++                before(param);
++            } catch (ReflectiveOperationException | RuntimeException error) {
++                drawError(error);
++            }
++        }
++
++        @Override public final void afterHookedMethod(MethodHookParam param) {
++            try {
++                after(param);
++            } catch (ReflectiveOperationException | RuntimeException error) {
++                drawError(error);
++            }
++        }
++
++        void before(MethodHookParam param) throws ReflectiveOperationException {}
++        void after(MethodHookParam param) throws ReflectiveOperationException {}
++    }
++
+     private static void installTabs() throws ReflectiveOperationException {
+-        XC_MethodHook attach = new XC_MethodHook() {
+-            @Override protected void afterHookedMethod(MethodHookParam p) throws Throwable {
++        XC_MethodHook attach = new UiHook() {
++            @Override void after(MethodHookParam p) throws ReflectiveOperationException {
+                 if (!p.hasThrowable()) attachTabs(p.thisObject);
+             }
+         };
+         hook(mainActivity, "createView", attach, Context.class);
+         hook(mainActivity, "onResume", attach);
+
+-        hook(tabLayout, "dispatchTouchEvent", new XC_MethodHook() {
+-            @Override protected void beforeHookedMethod(MethodHookParam p) {
++        hook(tabLayout, "dispatchTouchEvent", new UiHook() {
++            @Override void before(MethodHookParam p) {
+                 View view = (View) p.thisObject;
+                 Tabs state = tabs.get(view);
+                 if (state != null) state.touch(view, (MotionEvent) p.args[0]);
+             }
+         }, MotionEvent.class);
+
+-        hook(tabLayout, "setTabSelected", new XC_MethodHook() {
+-            @Override protected void afterHookedMethod(MethodHookParam p) {
++        hook(tabLayout, "setTabSelected", new UiHook() {
++            @Override void after(MethodHookParam p) {
+                 View view = (View) p.thisObject;
+                 if (tabs.containsKey(view)) view.invalidate();
+             }
+         }, View.class, boolean.class);
+
+-        hook(tabLayout, "dispatchDraw", new XC_MethodHook() {
+-            @Override protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
++        hook(tabLayout, "dispatchDraw", new UiHook() {
++            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
+                 ViewGroup view = (ViewGroup) p.thisObject;
+                 Tabs state = tabs.get(view);
+                 Canvas canvas = (Canvas) p.args[0];
+@@ -190,7 +212,7 @@
+                     drawError(error);
+                 }
+             }
+-            @Override protected void afterHookedMethod(MethodHookParam p) throws Throwable {
++            @Override void after(MethodHookParam p) throws ReflectiveOperationException {
+                 Object saved = p.getObjectExtra(STOCK_SELECTOR);
+                 if (saved != null) layoutSelector.setBoolean(p.thisObject, (boolean) saved);
+                 saved = p.getObjectExtra(STOCK_DIVIDER);
+@@ -198,8 +220,8 @@
+             }
+         }, Canvas.class);
+
+-        hook(glassTab, "dispatchDraw", new XC_MethodHook() {
+-            @Override protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
++        hook(glassTab, "dispatchDraw", new UiHook() {
++            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
+                 View view = (View) p.thisObject;
+                 if (!(view.getParent() instanceof View)) return;
+                 Tabs state = tabs.get((View) view.getParent());
+@@ -207,14 +229,14 @@
+                 p.setObjectExtra(STOCK_SELECTOR, tabSkip.getBoolean(view));
+                 tabSkip.setBoolean(view, true);
+             }
+-            @Override protected void afterHookedMethod(MethodHookParam p) throws Throwable {
++            @Override void after(MethodHookParam p) throws ReflectiveOperationException {
+                 Object saved = p.getObjectExtra(STOCK_SELECTOR);
+                 if (saved != null) tabSkip.setBoolean(p.thisObject, (boolean) saved);
+             }
+         }, Canvas.class);
+
+-        hook(blurDrawable, "draw", new XC_MethodHook() {
+-            @Override protected void beforeHookedMethod(MethodHookParam p) {
++        hook(blurDrawable, "draw", new UiHook() {
++            @Override void before(MethodHookParam p) {
+                 Drawable drawable = (Drawable) p.thisObject;
+                 Canvas canvas = (Canvas) p.args[0];
+                 if (!canvas.isHardwareAccelerated()) return;
+@@ -254,8 +276,8 @@
+         hook(roundButton, "draw", drawButton(0), Canvas.class);
+         hook(fab, "draw", drawButton(1), Canvas.class);
+         hook(send, "onDraw", drawButton(2), Canvas.class);
+-        hook(send, "checkBackgroundRect", new XC_MethodHook() {
+-            @Override protected void afterHookedMethod(MethodHookParam p) throws Throwable {
++        hook(send, "checkBackgroundRect", new UiHook() {
++            @Override void after(MethodHookParam p) throws ReflectiveOperationException {
+                 if (currentSend == null || currentSend.view.get() != p.thisObject) return;
+                 Paint paint = (Paint) sendPaint.get(p.thisObject);
+                 RectF rect = (RectF) sendRect.get(p.thisObject);
+@@ -269,8 +291,8 @@
+     }
+
+     private static XC_MethodHook drawButton(int kind) {
+-        return new XC_MethodHook() {
+-            @Override protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
++        return new UiHook() {
++            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
+                 View view = (View) p.thisObject;
+                 Canvas canvas = (Canvas) p.args[0];
+                 if (!canvas.isHardwareAccelerated() || !view.isAttachedToWindow()
+@@ -308,7 +330,7 @@
+                 }
+             }
+
+-            @Override protected void afterHookedMethod(MethodHookParam p) throws Throwable {
++            @Override void after(MethodHookParam p) throws ReflectiveOperationException {
+                 Button state = (Button) p.getObjectExtra(DRAW_FRAME);
+                 if (state == null) return;
+                 Canvas canvas = (Canvas) p.args[0];
