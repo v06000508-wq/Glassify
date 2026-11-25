@@ -10,17 +10,24 @@ GLASSIFY_EXTENSION = {
     "min_exteragram": "13.2.2"
 }
 
-_DEX_PATH = "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/local.kyant_liquid_buttons/1.0/payload/header.module.b64"
-_DEX_SHA256 = "1c76cac0883bda0cc3407abea53fb63ffaac2937d3b1fc687a31ea7c231ec343"
-_DEX_SIZE = 65384
+_DEX_PATH = "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/local.kyant_liquid_buttons/1.0/payload/soft-glass.module.b64"
+_DEX_SHA256 = "4461c3970bb77bd6f7f9da643a168fa8e77d078644105ec1ab2934a28afd4c8f"
+_DEX_SIZE = 72020
 _DEX_CLASS = "glassify.kyant.LiquidButtonsEntry"
 _handle = None
+
+
+def _sync_strength(api, strength):
+    if _handle is not None:
+        api.call_embedded_dex(_handle, "setStrength", [str(strength)])
 
 
 def on_load(api):
     global _handle
     _handle = api.load_remote_dex([_DEX_PATH], _DEX_SHA256, _DEX_SIZE, _DEX_CLASS)
+    _sync_strength(api, api.current_strength())
     api.activate_embedded_dex(_handle)
+    api.register_strength_listener(lambda strength: _sync_strength(api, strength))
 
 
 def on_unload(api):

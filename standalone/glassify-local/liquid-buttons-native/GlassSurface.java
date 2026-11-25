@@ -16,13 +16,24 @@ import android.graphics.RuntimeShader;
 import android.graphics.Shader;
 
 final class GlassSurface {
-    private static final float BLUR_DP = 2f;
-    private static final float REFRACTION_DP = 24f;
-    private static final float DISPERSION = .52f;
+    // Includes the largest displacement and the Gaussian's sampling margin.
+    static final int CAPTURE_MARGIN_DP = 48;
+
+    record Optics(float blurDp, float bandDp, float refractionDp, float dispersion) {
+        static Optics fromStrength(int strength) {
+            float t = Math.max(1, Math.min(100, strength)) / 100f;
+            return new Optics(2.75f + 3.5f * t, 4f + 14f * t, 5f + 13f * t, .10f + .32f * t);
+        }
+
+        int padding(float dp) {
+            return (int) Math.ceil((refractionDp * (1 + dispersion) + blurDp * 3 + 2) * dp);
+        }
+    }
+
     private static final ColorMatrixColorFilter VIBRANCY;
     static {
         ColorMatrix matrix = new ColorMatrix();
-        matrix.setSaturation(1.4f);
+        matrix.setSaturation(1.10f);
         VIBRANCY = new ColorMatrixColorFilter(matrix);
     }
 
@@ -32,6 +43,7 @@ final class GlassSurface {
     }
 
     private final float edgeStrength;
+    private final int downsample;
     private final RenderNode node = new RenderNode("Glassify Kyant backdrop");
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Path shape = new Path();
@@ -45,17 +57,19 @@ final class GlassSurface {
     private RuntimeShader lens;
     private RuntimeShader rim;
     private RenderEffect inputEffect;
+    private Optics appliedOptics;
     private boolean shaderFailed;
     private boolean rimFailed;
     private boolean effectDirty = true;
     private boolean rimDirty = true;
 
-    GlassSurface(float edgeStrength) {
+    GlassSurface(float edgeStrength, int downsample) {
         this.edgeStrength = edgeStrength;
+        this.downsample = downsample;
     }
 
     void draw(Canvas canvas, RectF bounds, float dp, Backdrop source, int base, int tint,
-              float[] corners, float press, float touchX, float touchY, boolean dark)
+              float[] corners, Optics optics, float press, float touchX, float touchY, boolean dark)
             throws ReflectiveOperationException {
         if (bounds.isEmpty()) return;
         updateShape(bounds, corners, dp);
@@ -67,7 +81,7 @@ final class GlassSurface {
         paint.clearShadowLayer();
 
         if (source != null && canvas.isHardwareAccelerated() && !shaderFailed) {
-            drawBackdrop(canvas, bounds, dp, source, base);
+            drawBackdrop(canvas, bounds, dp, source, base, optics);
         }
 
         paint.setColor(tint);
@@ -100,32 +114,40 @@ final class GlassSurface {
         rimDirty = true;
     }
 
-    private void drawBackdrop(Canvas canvas, RectF bounds, float dp, Backdrop source, int base)
+    private void drawBackdrop(Canvas canvas, RectF bounds, float dp, Backdrop source, int base, Optics optics)
             throws ReflectiveOperationException {
-        int pad = (int) Math.ceil((REFRACTION_DP * (1 + DISPERSION) + BLUR_DP * 2 + 2) * dp);
+        int pad = optics.padding(dp);
         int left = (int) Math.floor(bounds.left) - pad;
         int top = (int) Math.floor(bounds.top) - pad;
         int right = (int) Math.ceil(bounds.right) + pad;
         int bottom = (int) Math.ceil(bounds.bottom) + pad;
+        int width = (right - left + downsample - 1) / downsample;
+        int height = (bottom - top + downsample - 1) / downsample;
+        float scale = 1f / downsample;
         try {
             if (lens == null) {
                 lens = new RuntimeShader(Refraction.AGSL);
                 lens.setFloatUniform("depthEffect", .15f);
-                lens.setFloatUniform("refractionHeight", 12 * dp);
-                lens.setFloatUniform("refractionAmount", -REFRACTION_DP * dp);
-                lens.setFloatUniform("chromaticAberration", DISPERSION);
-                inputEffect = RenderEffect.createBlurEffect(BLUR_DP * dp, BLUR_DP * dp,
-                        RenderEffect.createColorFilterEffect(VIBRANCY), Shader.TileMode.CLAMP);
             }
-            // The touch transform belongs to the outer Canvas. Optics and the effect stay
-            // reusable as long as the drawable's native bounds and corners stay the same.
+            if (optics != appliedOptics) {
+                float radius = optics.blurDp * dp * scale;
+                inputEffect = RenderEffect.createBlurEffect(radius, radius,
+                        RenderEffect.createColorFilterEffect(VIBRANCY), Shader.TileMode.CLAMP);
+                appliedOptics = optics;
+                effectDirty = true;
+            }
+            // Touch transforms are on the outer canvas. Rebuild only for a new shape or strength.
             if (effectDirty) {
-                lens.setFloatUniform("size", bounds.width(), bounds.height());
-                lens.setFloatUniform("offset", left - bounds.left, top - bounds.top);
-                lens.setFloatUniform("cornerRadii", radii[0], radii[2], radii[4], radii[6]);
+                float band = Math.min(optics.bandDp * dp, .45f * Math.min(bounds.width(), bounds.height()));
+                lens.setFloatUniform("refractionHeight", band * scale);
+                lens.setFloatUniform("refractionAmount", -optics.refractionDp * dp * scale);
+                lens.setFloatUniform("chromaticAberration", optics.dispersion);
+                lens.setFloatUniform("size", bounds.width() * scale, bounds.height() * scale);
+                lens.setFloatUniform("offset", (left - bounds.left) * scale, (top - bounds.top) * scale);
+                lens.setFloatUniform("cornerRadii", radii[0] * scale, radii[2] * scale, radii[4] * scale, radii[6] * scale);
                 RenderEffect effect = RenderEffect.createRuntimeShaderEffect(lens, "content");
                 node.setRenderEffect(RenderEffect.createChainEffect(effect, inputEffect));
-                node.setPosition(left, top, right, bottom);
+                node.setPosition(left, top, left + width, top + height);
                 effectDirty = false;
             }
         } catch (IllegalArgumentException | IllegalStateException error) {
@@ -133,9 +155,10 @@ final class GlassSurface {
             android.util.Log.w("GlassifyKyant", "Lens unavailable", error);
             return;
         }
-        Canvas recording = node.beginRecording(right - left, bottom - top);
+        Canvas recording = node.beginRecording(width, height);
         try {
             recording.drawColor(base);
+            if (downsample != 1) recording.scale(scale, scale);
             recording.translate(-left, -top);
             source.draw(recording, left, top, right, bottom);
         } catch (IllegalStateException unavailable) {
@@ -147,6 +170,7 @@ final class GlassSurface {
         int save = canvas.save();
         try {
             canvas.clipPath(shape);
+            if (downsample != 1) canvas.scale(downsample, downsample, left, top);
             canvas.drawRenderNode(node);
         } finally {
             canvas.restoreToCount(save);

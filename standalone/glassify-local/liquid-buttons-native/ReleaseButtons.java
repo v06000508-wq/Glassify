@@ -45,6 +45,7 @@ final class ReleaseButtons {
     private static final WeakHashMap<View, Header> headers = new WeakHashMap<>();
     private static final WeakHashMap<View, ArrayList<Button>> profileActions = new WeakHashMap<>();
     private static final WeakHashMap<View, Button> panels = new WeakHashMap<>();
+    private static final WeakHashMap<Drawable, CaptureMargin> captureMargins = new WeakHashMap<>();
     private static final WeakHashMap<ViewGroup, Clip> clips = new WeakHashMap<>();
     private static final WeakHashMap<View, QrState> qrStates = new WeakHashMap<>();
     private static final WeakHashMap<Object, WeakReference<Object>> dialogsCapture = new WeakHashMap<>();
@@ -54,6 +55,8 @@ final class ReleaseButtons {
     private static Field contactsFab, roundBackground, pageDownInner, factoryEngine;
     private static Method baseGlass, getFragmentView, createCapture, setOutset, engineInvalidate, unregister;
     private static Method syncGlass, syncTheme, resolveSource, getSource, sourceDraw, offsetX, offsetY, paddedBounds, darkTheme;
+    private static Method glassSettings, getOutsetX, getOutsetY;
+    private static Field blurEnabled, liquidEnabled;
     private static Field backgroundColor, drawableProps, drawableRadii, ctaBackground, pinnedBackground, pinnedColor;
     private static Method rectangleInParent;
     private static Field[] qrRects, scannerRects;
@@ -64,6 +67,20 @@ final class ReleaseButtons {
     private static Header activeHeader;
     private static Drawable skipFabBackdrop;
     private static boolean logged;
+    private static int strength = 50;
+    private static GlassSurface.Optics optics = GlassSurface.Optics.fromStrength(strength);
+
+    static void setStrength(int value) {
+        value = Math.max(1, Math.min(100, value));
+        if (value == strength) return;
+        strength = value;
+        optics = GlassSurface.Optics.fromStrength(value);
+        buttons.values().forEach(Button::invalidateFrame);
+        headers.keySet().forEach(View::postInvalidateOnAnimation);
+        panels.keySet().forEach(View::postInvalidateOnAnimation);
+        profileActions.keySet().forEach(View::postInvalidateOnAnimation);
+        qrStates.keySet().forEach(View::postInvalidateOnAnimation);
+    }
 
     static void load(Context context) throws ReflectiveOperationException {
         if (Build.VERSION.SDK_INT < 33) throw new IllegalStateException("Liquid Buttons requires Android 13+");
@@ -91,7 +108,13 @@ final class ReleaseButtons {
                     Canvas canvas = (Canvas) p.args[0];
                     Drawable drawable = (Drawable) p.thisObject;
                     Button button = scope.button;
-                    if (!canvas.isHardwareAccelerated() || !button.sample.resolve(drawable)) return;
+                    if (!canvas.isHardwareAccelerated()) return;
+                    if (!glassActive()) {
+                        releaseCaptureMargin(drawable);
+                        return;
+                    }
+                    if (!button.sample.resolve(drawable)) return;
+                    if (button.sample.source != null) extendCapture(drawable, button);
                     RectF bounds = button.bounds;
                     bounds.set(button.sample.padded);
                     if (bounds.isEmpty()) return;
@@ -140,7 +163,10 @@ final class ReleaseButtons {
         profileActions.clear();
         panels.keySet().forEach(View::invalidate);
         panels.clear();
+        captureMargins.forEach(ReleaseButtons::restoreCaptureMargin);
+        captureMargins.clear();
         qrStates.values().forEach(QrState::cancel);
+        qrStates.keySet().forEach(View::invalidate);
         qrStates.clear();
         dialogsCapture.clear();
         activeQr = null;
@@ -176,7 +202,12 @@ final class ReleaseButtons {
         factoryEngine = field(factory, "engine");
         createCapture = factory.getMethod("create", View.class);
         setOutset = drawableClass.getMethod("setOutset", int.class, int.class);
+        getOutsetX = drawableClass.getMethod("getOutsetX");
+        getOutsetY = drawableClass.getMethod("getOutsetY");
         engineInvalidate = engine.getMethod("invalidate");
+        glassSettings = engine.getMethod("getCurrentGlassSettings");
+        blurEnabled = glassSettings.getReturnType().getField("isBlurEnabled");
+        liquidEnabled = glassSettings.getReturnType().getField("isLiquidGlassEnabled");
         unregister = engine.getMethod("unregisterDrawable", loader.loadClass("org.telegram.utils.glass.GlassDrawable"));
         rectangleInParent = loader.loadClass(component + "chat.ViewPositionWatcher")
                 .getMethod("computeRectInParent", View.class, View.class, RectF.class);
@@ -248,7 +279,7 @@ final class ReleaseButtons {
                 if (state == null || !canvas.isHardwareAccelerated()) return;
                 state.freeClipping(view, 3);
                 state.watchPress(view);
-                if (state.capture != null && !state.capture.getBounds().isEmpty()) {
+                if (state.capture != null && !state.capture.getBounds().isEmpty() && glassActive()) {
                     p.setObjectExtra(SCOPE, new Object[]{skipFabBackdrop});
                     skipFabBackdrop = (Drawable) fabStockGlass.get(view);
                 }
@@ -292,7 +323,7 @@ final class ReleaseButtons {
         if (button == null || button.getVisibility() == View.GONE) return;
         RectF area = new RectF();
         if ((boolean) rectangleInParent.invoke(null, button, root, area) && !area.isEmpty()) {
-            float overscan = 46 * dp(button);
+            float overscan = GlassSurface.CAPTURE_MARGIN_DP * dp(button);
             area.inset(-overscan, -overscan);
             if (area.intersect(0, 0, root.getWidth(), root.getHeight())) union.union(area);
         }
@@ -397,8 +428,10 @@ final class ReleaseButtons {
         }, Canvas.class, RectF.class, float[].class, float.class);
 
         // Keep ProfileMusicView's own bounce and layout for the balance and music chips.
-        installPanel(loader.loadClass(UI + "Components.ProfileMusicView"), "onDraw", "glass");
-        installPanel(loader.loadClass(UI + "Components.ChatActivityTopPanelLayout"), "dispatchDraw", "backgroundDrawable");
+        installPanel(loader.loadClass(UI + "Components.ProfileMusicView"), "onDraw", "glass", 1);
+        installPanel(loader.loadClass(UI + "Components.ChatActivityTopPanelLayout"), "dispatchDraw", "backgroundDrawable", 1);
+        // The host stops drawing its own menu capsule while this overlay grows from it.
+        installPanel(loader.loadClass(UI + "ActionBar.SimpleActionBarMenuOverlay"), "dispatchDraw", "glass", 2);
         installPinnedAction(loader);
     }
 
@@ -417,7 +450,7 @@ final class ReleaseButtons {
                     Drawable backdrop = (Drawable) glass[i].get(bar);
                     Button state = header.bind(i, bar, child, backdrop);
                     if (child != null && i != 1) state.watchPress(child);
-                    if (i != 0 || child == null || backdrop != null || child.getAlpha() <= 0) continue;
+                    if (i != 0 || child == null || backdrop != null || child.getAlpha() <= 0 || !glassActive()) continue;
 
                     // Some bars have no native back drawable until the factory is attached.
                     buttonRect(child, state.layout);
@@ -466,7 +499,7 @@ final class ReleaseButtons {
         rect.set(view.getX(), view.getY(), view.getX() + view.getWidth(), view.getY() + view.getHeight());
     }
 
-    private static void installPanel(Class<?> type, String draw, String drawableField)
+    private static void installPanel(Class<?> type, String draw, String drawableField, int downsample)
             throws ReflectiveOperationException {
         Field glass = field(type, drawableField);
         hook(type, draw, new UiHook() {
@@ -475,7 +508,7 @@ final class ReleaseButtons {
                 View view = (View) p.thisObject;
                 Drawable drawable = (Drawable) glass.get(view);
                 if (drawable != null) {
-                    scopeGlass(p, panels.computeIfAbsent(view, v -> new Button(v, false)), drawable, false);
+                    scopeGlass(p, panels.computeIfAbsent(view, v -> new Button(v, false, downsample)), drawable, false);
                 }
             }
             @Override void after(MethodHookParam p) { endScope(p); }
@@ -541,7 +574,7 @@ final class ReleaseButtons {
                 RectF bounds = (RectF) p.args[1];
                 Canvas canvas = (Canvas) p.args[0];
                 int index = slot(qrRects, view, bounds);
-                if (index < 0 || bounds.isEmpty() || !canvas.isHardwareAccelerated()) return;
+                if (index < 0 || bounds.isEmpty() || !canvas.isHardwareAccelerated() || !glassActive()) return;
                 Button state = qr(view, qrRects.length).items[index];
                 boolean dark = !(boolean) p.args[3];
                 float alpha = (float) p.args[4];
@@ -559,7 +592,7 @@ final class ReleaseButtons {
         hook(qrViewClass, "drawRipple", new UiHook() {
             @Override void before(MethodHookParam p) throws ReflectiveOperationException {
                 if (((Canvas) p.args[0]).isHardwareAccelerated()
-                        && slot(qrRects, p.thisObject, (RectF) p.args[2]) >= 0) p.setResult(null);
+                        && slot(qrRects, p.thisObject, (RectF) p.args[2]) >= 0 && glassActive()) p.setResult(null);
             }
         }, Canvas.class, int.class, RectF.class, boolean.class);
 
@@ -585,7 +618,8 @@ final class ReleaseButtons {
         hook(scannerClass, "drawButton", new UiHook() {
             @Override void before(MethodHookParam p) throws ReflectiveOperationException {
                 Canvas canvas = (Canvas) p.args[0];
-                if (!canvas.isHardwareAccelerated() || slot(scannerRects, p.thisObject, (RectF) p.args[1]) < 0) return;
+                if (!canvas.isHardwareAccelerated() || slot(scannerRects, p.thisObject, (RectF) p.args[1]) < 0
+                        || !glassActive()) return;
                 p.setObjectExtra(SCOPE, new Object[]{activeQr});
                 activeQr = qr((View) p.thisObject, scannerRects.length);
                 p.args[2] = 1f;
@@ -702,10 +736,11 @@ final class ReleaseButtons {
             float press = button.progress();
             if (sampled && button.sample.source == null) source = null;
             float tint = source == null ? (dark ? .89f : .88f) : (dark ? .22f : .26f);
+            if (source != null && sampled) tint += (button.sample.color >>> 24) / 255f * .16f;
             boolean screenCoordinates = button.canvasControl;
             button.surface.draw(canvas, bounds, button.dp, source, source == null ? 0 : base(dark),
                     (Math.round(tint * 255) << 24) | (color & 0xFFFFFF), sampled ? button.sample.radii : null,
-                    press, button.glowX(bounds, screenCoordinates), button.glowY(bounds, screenCoordinates), dark);
+                    optics, press, button.glowX(bounds, screenCoordinates), button.glowY(bounds, screenCoordinates), dark);
         } finally {
             if (sampled) button.sample.source = null;
             canvas.restoreToCount(save);
@@ -752,6 +787,42 @@ final class ReleaseButtons {
     private static int base(boolean dark) { return dark ? NIGHT : DAY; }
     private static boolean dark() throws ReflectiveOperationException { return (boolean) darkTheme.invoke(null); }
     private static float dp(View view) { return view.getResources().getDisplayMetrics().density; }
+
+    private static boolean glassActive() throws ReflectiveOperationException {
+        Object settings = glassSettings.invoke(null);
+        return blurEnabled.getBoolean(settings) && liquidEnabled.getBoolean(settings);
+    }
+
+    private static void extendCapture(Drawable drawable, Button button) throws ReflectiveOperationException {
+        if (captureMargins.containsKey(drawable)) return;
+        int margin = (int) Math.ceil(GlassSurface.CAPTURE_MARGIN_DP * button.dp);
+        int x = (int) getOutsetX.invoke(drawable);
+        int y = (int) getOutsetY.invoke(drawable);
+        int extendedX = Math.max(x, margin);
+        int extendedY = Math.max(y, margin);
+        captureMargins.put(drawable, new CaptureMargin(x, y, extendedX, extendedY));
+        if (extendedX != x || extendedY != y) {
+            setOutset.invoke(drawable, extendedX, extendedY);
+            button.invalidateFrame();
+        }
+    }
+
+    private static void releaseCaptureMargin(Drawable drawable) {
+        CaptureMargin margin = captureMargins.remove(drawable);
+        if (margin != null) restoreCaptureMargin(drawable, margin);
+    }
+
+    private static void restoreCaptureMargin(Drawable drawable, CaptureMargin margin) {
+        if (margin.extendedX == margin.x && margin.extendedY == margin.y) return;
+        try {
+            if ((int) getOutsetX.invoke(drawable) == margin.extendedX
+                    && (int) getOutsetY.invoke(drawable) == margin.extendedY) {
+                setOutset.invoke(drawable, margin.x, margin.y);
+            }
+        } catch (ReflectiveOperationException | RuntimeException error) {
+            report(error);
+        }
+    }
 
     private static Field field(Class<?> type, String name) throws ReflectiveOperationException {
         Field f = type.getDeclaredField(name);
@@ -802,6 +873,7 @@ final class ReleaseButtons {
         }
     }
     private record ActiveGlass(Button button, Drawable drawable, boolean moveGlass) {}
+    private record CaptureMargin(int x, int y, int extendedX, int extendedY) {}
 
     private static final class Header {
         final WeakReference<View> owner;
@@ -923,7 +995,7 @@ final class ReleaseButtons {
         final RectF bounds = new RectF();
         final RectF layout = new RectF();
         final Sample sample = new Sample();
-        final GlassSurface surface = new GlassSurface(.40f);
+        final GlassSurface surface;
         final List<WeakReference<ViewGroup>> clipOwners = new ArrayList<>();
         boolean tracking, nativePress, touchKnown, outlineDisabled, connect, pinned, menuTarget;
         WeakReference<View> invalidateHost;
@@ -939,9 +1011,14 @@ final class ReleaseButtons {
         int warmup;
 
         Button(View target, boolean canvasControl) {
+            this(target, canvasControl, 1);
+        }
+
+        Button(View target, boolean canvasControl, int downsample) {
             view = new WeakReference<>(target);
             dp = dp(target);
             this.canvasControl = canvasControl;
+            surface = new GlassSurface(.40f, downsample);
             press.setMinimumVisibleChange(.003f);
             press.setSpring(new SpringForce(0));
             press.addUpdateListener((animation, value, velocity) -> invalidateFrame());
@@ -1077,7 +1154,8 @@ final class ReleaseButtons {
         private void create(View view, Object factory) throws ReflectiveOperationException {
             engine = new WeakReference<>(factoryEngine.get(factory));
             capture = (Drawable) createCapture.invoke(factory, view);
-            setOutset.invoke(capture, Math.round(46 * dp), Math.round(46 * dp));
+            int margin = (int) Math.ceil(GlassSurface.CAPTURE_MARGIN_DP * dp);
+            setOutset.invoke(capture, margin, margin);
             layoutListener = (v, l, t, r, b, oldL, oldT, oldR, oldB) -> updateCapture(v);
             view.addOnLayoutChangeListener(layoutListener);
             updateCapture(view);
@@ -1146,32 +1224,45 @@ final class ReleaseButtons {
                         state.warmup--;
                         view.postInvalidateOnAnimation();
                     }
-                    state.bounds.set(getBounds());
-                    if (state.connect || state.pinned) {
-                        int save = canvas.save();
-                        try {
-                            if (state.connect) state.move(canvas, state.bounds);
-                            boolean dark = dark();
-                            int color = (state.pinned ? pinnedColor : ctaBackground).getInt(view);
-                            drawLiquid(canvas, state, null, color == 0 ? 0xFF345784 : color,
-                                    dark, alpha / 255f, state.bounds);
-                        } finally {
-                            canvas.restoreToCount(save);
-                        }
-                        return;
-                    }
-                    if (fabSub.getBoolean(view)) state.bounds.inset(4 * state.dp, 4 * state.dp);
-                    if (state.sample.resolve(state.capture)) {
-                        boolean dark = dark();
-                        int color = fabSub.getBoolean(view) ? base(dark) : fabTint.getInt(view);
-                        if (color == 0) color = base(dark);
-                        drawLiquid(canvas, state, state.sample, color, dark, alpha / 255f, state.bounds);
+                    if (glassActive()) {
+                        drawGlass(canvas, view);
                         return;
                     }
                 } catch (ReflectiveOperationException | RuntimeException error) {
                     report(error);
                 }
             }
+            drawStock(canvas);
+        }
+
+        private void drawGlass(Canvas canvas, View view) throws ReflectiveOperationException {
+            state.bounds.set(getBounds());
+            if (state.connect || state.pinned) {
+                int save = canvas.save();
+                try {
+                    if (state.connect) state.move(canvas, state.bounds);
+                    boolean dark = dark();
+                    int color = (state.pinned ? pinnedColor : ctaBackground).getInt(view);
+                    drawLiquid(canvas, state, null, color == 0 ? 0xFF345784 : color,
+                            dark, alpha / 255f, state.bounds);
+                } finally {
+                    canvas.restoreToCount(save);
+                }
+                return;
+            }
+            boolean subButton = fabSub.getBoolean(view);
+            if (subButton) state.bounds.inset(4 * state.dp, 4 * state.dp);
+            if (state.sample.resolve(state.capture)) {
+                boolean dark = dark();
+                int color = subButton ? base(dark) : fabTint.getInt(view);
+                if (color == 0) color = base(dark);
+                drawLiquid(canvas, state, state.sample, color, dark, alpha / 255f, state.bounds);
+            } else {
+                drawStock(canvas);
+            }
+        }
+
+        private void drawStock(Canvas canvas) {
             if (stock != null && alpha > 0) {
                 stock.setState(getState());
                 stock.setBounds(getBounds());
