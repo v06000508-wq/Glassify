@@ -14,6 +14,7 @@ import android.graphics.RenderEffect;
 import android.graphics.RenderNode;
 import android.graphics.RuntimeShader;
 import android.graphics.Shader;
+import android.os.SystemClock;
 
 final class GlassSurface {
     // Refraction samples inwards. The capture margin covers the blur outside the silhouette.
@@ -42,6 +43,9 @@ final class GlassSurface {
     interface Backdrop {
         void draw(Canvas canvas, float l, float t, float r, float b)
                 throws ReflectiveOperationException;
+
+        // An identity for stable recordings of a native source with live child RenderNodes.
+        default Object recordingToken() { return null; }
     }
 
     private final float edgeStrength;
@@ -56,10 +60,14 @@ final class GlassSurface {
     private final float[] innerRadii = new float[8];
     private final Matrix glowMatrix = new Matrix();
     private RadialGradient glow;
+    private float glowX, glowY, glowSpread = -1;
     private RuntimeShader lens;
     private RuntimeShader rim;
     private RenderEffect inputEffect;
     private Optics appliedOptics;
+    private Object recordedToken;
+    private long recordedAt;
+    private int recordedBase;
     private float maximumCorner;
     private boolean shaderFailed;
     private boolean rimFailed;
@@ -72,7 +80,8 @@ final class GlassSurface {
     }
 
     void draw(Canvas canvas, RectF bounds, float dp, Backdrop source, int base, int tint,
-              float[] corners, Optics optics, float press, float touchX, float touchY, boolean dark)
+              float[] corners, Optics optics, float press, float touchX, float touchY, boolean dark,
+              boolean settling)
             throws ReflectiveOperationException {
         if (bounds.isEmpty()) return;
         updateShape(bounds, corners, dp);
@@ -84,7 +93,7 @@ final class GlassSurface {
         paint.clearShadowLayer();
 
         if (source != null && canvas.isHardwareAccelerated() && !shaderFailed) {
-            drawBackdrop(canvas, bounds, dp, source, base, optics);
+            drawBackdrop(canvas, bounds, dp, source, base, optics, settling);
         }
 
         paint.setColor(tint);
@@ -118,7 +127,8 @@ final class GlassSurface {
         rimDirty = true;
     }
 
-    private void drawBackdrop(Canvas canvas, RectF bounds, float dp, Backdrop source, int base, Optics optics)
+    private void drawBackdrop(Canvas canvas, RectF bounds, float dp, Backdrop source, int base, Optics optics,
+                              boolean settling)
             throws ReflectiveOperationException {
         int pad = optics.padding(dp);
         int left = (int) Math.floor(bounds.left) - pad;
@@ -154,6 +164,7 @@ final class GlassSurface {
                 RenderEffect effect = RenderEffect.createRuntimeShaderEffect(lens, "content");
                 node.setRenderEffect(RenderEffect.createChainEffect(effect, inputEffect));
                 node.setPosition(left, top, left + width, top + height);
+                recordedToken = null;
                 effectDirty = false;
             }
         } catch (IllegalArgumentException | IllegalStateException error) {
@@ -161,17 +172,27 @@ final class GlassSurface {
             android.util.Log.w("GlassifyKyant", "Lens unavailable", error);
             return;
         }
-        Canvas recording = node.beginRecording(width, height);
-        try {
-            recording.drawColor(base);
-            if (downsample != 1) recording.scale(scale, scale);
-            recording.translate(-left, -top);
-            source.draw(recording, left, top, right, bottom);
-        } catch (IllegalStateException unavailable) {
-            // A live source can already be recording this frame. Retry the next draw.
-            return;
-        } finally {
-            node.endRecording();
+        Object token = source.recordingToken();
+        long now = token == null ? 0 : SystemClock.uptimeMillis();
+        // The children remain live. Refresh their placement if scrolling changes it mid-return.
+        if (!settling || token == null || token != recordedToken || base != recordedBase
+                || now - recordedAt >= 32 || !node.hasDisplayList()) {
+            recordedToken = null;
+            Canvas recording = node.beginRecording(width, height);
+            try {
+                recording.drawColor(base);
+                if (downsample != 1) recording.scale(scale, scale);
+                recording.translate(-left, -top);
+                source.draw(recording, left, top, right, bottom);
+                recordedToken = token;
+                recordedAt = now;
+                recordedBase = base;
+            } catch (IllegalStateException unavailable) {
+                // A live source can already be recording this frame. Retry the next draw.
+                return;
+            } finally {
+                node.endRecording();
+            }
         }
         int save = canvas.save();
         try {
@@ -232,9 +253,14 @@ final class GlassSurface {
         canvas.drawPath(shape, paint);
 
         float spread = Math.min(bounds.width(), bounds.height()) * 1.5f;
-        glowMatrix.setScale(spread, spread);
-        glowMatrix.postTranslate(touchX, touchY);
-        glow.setLocalMatrix(glowMatrix);
+        if (spread != glowSpread || touchX != glowX || touchY != glowY) {
+            glowMatrix.setScale(spread, spread);
+            glowMatrix.postTranslate(touchX, touchY);
+            glow.setLocalMatrix(glowMatrix);
+            glowSpread = spread;
+            glowX = touchX;
+            glowY = touchY;
+        }
         paint.setAlpha(Math.round(38 * progress));
         paint.setShader(glow);
         canvas.drawPath(shape, paint);

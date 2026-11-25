@@ -3,9 +3,10 @@ package glassify.kyant;
 // Geometry based on Telegram iOS GlassBackgroundComponent/TouchEffect.swift.
 final class ButtonMotion {
     record Transform(float x, float y, float scaleX, float scaleY) {}
+    static final Transform REST = new Transform(0, 0, 1, 1);
 
     static Transform transform(float width, float height, float dp, float press, float dragX, float dragY) {
-        if (width <= 0 || height <= 0) return new Transform(0, 0, 1, 1);
+        if (width <= 0 || height <= 0) return REST;
         float base = 1 + 20 * dp / Math.max(width, height) * press;
         float aspect = width / height;
         float adjustedX = dragX / aspect;
@@ -18,6 +19,18 @@ final class ButtonMotion {
         return Math.abs(x) > Math.abs(y)
                 ? new Transform(24 * dp * k * x, 24 * dp * k * y, base * stretch, base / stretch)
                 : new Transform(24 * dp * k * x, 24 * dp * k * y, base / stretch, base * stretch);
+    }
+
+    static Transform interpolate(Transform from, Transform to, float fraction) {
+        if (fraction <= 0) return from;
+        if (fraction >= 1) return to;
+        return new Transform(
+                lerp(from.x, to.x, fraction), lerp(from.y, to.y, fraction),
+                lerp(from.scaleX, to.scaleX, fraction), lerp(from.scaleY, to.scaleY, fraction));
+    }
+
+    static float lerp(float from, float to, float fraction) {
+        return from + (to - from) * fraction;
     }
 
     static float stiffness(float mass, float stiffness) {

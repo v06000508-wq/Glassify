@@ -58,6 +58,7 @@ final class ReleaseButtons {
     private static final WeakHashMap<Object, WeakReference<Object>> dialogsCapture = new WeakHashMap<>();
 
     private static Class<?> drawableClass, fabClass, dialogsClass, contactsClass, mainTabsClass, qrViewClass, scannerClass;
+    private static Class<?> renderNodeSourceClass;
     private static Field fabSub, fabTint, fabStockGlass, dialogsFactory, messageFab, storyFab, dialogsNoise;
     private static Field contactsFab, roundBackground, pageDownInner, factoryEngine;
     private static Method baseGlass, getFragmentView, createCapture, setOutset, engineInvalidate, unregister;
@@ -225,6 +226,7 @@ final class ReleaseButtons {
         syncTheme = method(drawableClass, "checkThemeColors");
         resolveSource = drawableClass.getMethod("shouldHaveDisplayList");
         getSource = drawableClass.getMethod("getUnwrappedSource");
+        renderNodeSourceClass = loader.loadClass("org.telegram.utils.glass.source.GlassSourceRenderNode");
         sourceDraw = loader.loadClass("org.telegram.utils.glass.source.GlassSource")
                 .getMethod("draw", Canvas.class, float.class, float.class, float.class, float.class);
         offsetX = drawableClass.getMethod("getSourceOffsetX");
@@ -749,7 +751,8 @@ final class ReleaseButtons {
             boolean screenCoordinates = button.canvasControl;
             button.surface.draw(canvas, bounds, button.dp, source, source == null ? 0 : base(dark),
                     (Math.round(tint * 255) << 24) | (color & 0xFFFFFF), corners,
-                    optics, press, button.glowX(bounds, screenCoordinates), button.glowY(bounds, screenCoordinates), dark);
+                    optics, press, button.glowX(bounds, screenCoordinates), button.glowY(bounds, screenCoordinates),
+                    dark, button.settling());
         } finally {
             if (sampled) button.sample.source = null;
             canvas.restoreToCount(save);
@@ -962,6 +965,8 @@ final class ReleaseButtons {
     private static final class Sample implements GlassSurface.Backdrop {
         final Rect padded = new Rect();
         Object source;
+        Object recordingToken;
+        WeakReference<Object> recordedSource;
         float[] radii;
         float x, y;
         int color;
@@ -971,13 +976,24 @@ final class ReleaseButtons {
             syncGlass.invoke(drawable);
             resolveSource.invoke(drawable);
             source = getSource.invoke(drawable);
-            x = (float) offsetX.invoke(drawable);
-            y = (float) offsetY.invoke(drawable);
+            float nextX = (float) offsetX.invoke(drawable);
+            float nextY = (float) offsetY.invoke(drawable);
+            if (!renderNodeSourceClass.isInstance(source)) {
+                recordingToken = null;
+                recordedSource = null;
+            } else if (recordedSource == null || recordedSource.get() != source || nextX != x || nextY != y) {
+                recordedSource = new WeakReference<>(source);
+                recordingToken = new Object();
+            }
+            x = nextX;
+            y = nextY;
             color = backgroundColor.getInt(drawable);
             radii = (float[]) drawableRadii.get(drawableProps.get(drawable));
             paddedBounds.invoke(drawable, padded);
             return !padded.isEmpty();
         }
+
+        @Override public Object recordingToken() { return recordingToken; }
 
         @Override public void draw(Canvas canvas, float l, float t, float r, float b)
                 throws ReflectiveOperationException {
@@ -999,14 +1015,17 @@ final class ReleaseButtons {
         final WeakReference<View> view;
         final float dp;
         final boolean canvasControl;
-        final FloatValueHolder progress = new FloatValueHolder();
-        final SpringAnimation press = new SpringAnimation(progress);
+        final FloatValueHolder phase = new FloatValueHolder(1f);
+        final SpringAnimation press = new SpringAnimation(phase);
         final RectF bounds = new RectF();
         final RectF layout = new RectF();
         final Sample sample = new Sample();
         final GlassSurface surface;
         final List<WeakReference<ViewGroup>> clipOwners = new ArrayList<>();
-        boolean tracking, nativePress, touchKnown, outlineDisabled, connect, pinned, menuTarget;
+        boolean tracking, touchReleased, lifted, touchKnown, outlineDisabled, connect, pinned, menuTarget;
+        ButtonMotion.Transform shown = ButtonMotion.REST;
+        ButtonMotion.Transform from = ButtonMotion.REST;
+        float fromGlow, shownGlow;
         WeakReference<View> invalidateHost;
         WeakReference<ViewGroup> clipParent;
         float startX, startY, x, y;
@@ -1030,37 +1049,61 @@ final class ReleaseButtons {
             this.canvasControl = canvasControl;
             surface = new GlassSurface(.40f, downsample);
             press.setMinimumVisibleChange(.003f);
-            press.setSpring(new SpringForce(0));
-            press.addUpdateListener((animation, value, velocity) -> invalidateFrame());
+            press.setSpring(new SpringForce(1f));
+            press.addUpdateListener((animation, value, velocity) -> {
+                // DynamicAnimation already runs in this frame's animation phase.
+                View targetView = invalidateTarget();
+                if (targetView != null) targetView.invalidate();
+            });
         }
 
         void animate(boolean pressed) {
-            float goal = pressed ? 1f : 0f;
             if (!ValueAnimator.areAnimatorsEnabled()) {
                 press.cancel();
-                progress.setValue(0);
+                phase.setValue(1f);
+                lifted = false;
+                shown = from = ButtonMotion.REST;
+                shownGlow = fromGlow = 0;
                 return;
             }
-            if (press.getSpring().getFinalPosition() == goal) return;
-            float mass = pressed ? 1.36f : 2f;
-            float stiffness = pressed ? 568f : 460f;
-            float damping = pressed ? 39.7f : 21.8f;
-            press.getSpring().setStiffness(ButtonMotion.stiffness(mass, stiffness))
-                    .setDampingRatio(ButtonMotion.damping(mass, stiffness, damping));
-            press.animateToFinalPosition(goal);
+            if (lifted == pressed) return;
+            boolean wasResting = !lifted && !press.isRunning();
+            from = wasResting ? ButtonMotion.REST : shown;
+            fromGlow = wasResting ? 0f : shownGlow;
+            lifted = pressed;
+            press.cancel();
+            if (!pressed && from == ButtonMotion.REST && fromGlow == 0) {
+                phase.setValue(1f);
+                return;
+            }
+            phase.setValue(0f);
+            press.getSpring()
+                    .setStiffness(pressed ? ButtonMotion.stiffness(1.36f, 568f) : 230f)
+                    .setDampingRatio(pressed ? ButtonMotion.damping(1.36f, 568f, 39.7f) : 1f);
+            press.setStartValue(0f).setStartVelocity(0f).start();
         }
 
-        float progress() { return Math.max(0, Math.min(1.12f, progress.getValue())); }
+        private float fraction() { return Math.max(0f, Math.min(1f, phase.getValue())); }
+
+        float progress() {
+            shownGlow = ButtonMotion.lerp(fromGlow, lifted ? 1f : 0f, fraction());
+            return shownGlow;
+        }
+
+        boolean settling() { return !lifted && press.isRunning(); }
 
         void watchPress(View owner) {
-            nativePress = owner.isPressed() && owner.isEnabled();
-            animate(tracking || nativePress);
+            boolean nativePress = owner.isPressed() && owner.isEnabled();
+            // Android may keep isPressed set after UP to finish its own click animation.
+            if (!nativePress && !press.isRunning()) touchReleased = false;
+            animate(tracking || (nativePress && !touchReleased));
         }
 
         void track(MotionEvent event, float offsetX, float offsetY) {
             switch (event.getActionMasked()) {
                 case MotionEvent.ACTION_DOWN:
                     tracking = true;
+                    touchReleased = false;
                     touchKnown = true;
                     x = startX = event.getX() - offsetX;
                     y = startY = event.getY() - offsetY;
@@ -1074,8 +1117,9 @@ final class ReleaseButtons {
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
                 case MotionEvent.ACTION_POINTER_DOWN:
+                    if (!tracking) return;
                     tracking = false;
-                    nativePress = false;
+                    touchReleased = true;
                     animate(false);
                     break;
                 default:
@@ -1085,16 +1129,23 @@ final class ReleaseButtons {
         }
 
         void invalidateFrame() {
-            View host = invalidateHost == null ? null : invalidateHost.get();
-            View target = host == null ? view.get() : host;
+            View target = invalidateTarget();
             if (target != null) target.postInvalidateOnAnimation();
         }
 
+        private View invalidateTarget() {
+            View host = invalidateHost == null ? null : invalidateHost.get();
+            return host == null ? view.get() : host;
+        }
+
         void move(Canvas canvas, RectF area) {
-            float p = progress();
-            if (p <= .001f) return;
-            ButtonMotion.Transform transform = ButtonMotion.transform(area.width(), area.height(), dp, p,
-                    touchKnown ? (x - startX) * p : 0, touchKnown ? (y - startY) * p : 0);
+            ButtonMotion.Transform target = lifted
+                    ? ButtonMotion.transform(area.width(), area.height(), dp, 1f,
+                            touchKnown ? x - startX : 0, touchKnown ? y - startY : 0)
+                    : ButtonMotion.REST;
+            ButtonMotion.Transform transform = ButtonMotion.interpolate(from, target, fraction());
+            shown = transform;
+            if (transform == ButtonMotion.REST) return;
             canvas.translate(transform.x(), transform.y());
             canvas.scale(transform.scaleX(), transform.scaleY(), area.centerX(), area.centerY());
         }
