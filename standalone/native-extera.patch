@@ -1,9 +1,247 @@
+--- a/extensions/kyant_liquid_glass/1.0/native/GlassSurface.java
++++ b/extensions/kyant_liquid_glass/1.0/native/GlassSurface.java
+@@ -4,7 +4,7 @@
+ import android.graphics.Color;
+ import android.graphics.ColorMatrix;
+ import android.graphics.ColorMatrixColorFilter;
+-import android.graphics.LinearGradient;
++import android.graphics.BlendMode;
+ import android.graphics.Paint;
+ import android.graphics.Path;
+ import android.graphics.RadialGradient;
+@@ -33,13 +33,33 @@
+     private RuntimeShader lens;
+     private float blur = -1;
+     private boolean shaderFailed;
+-    private float previousTop = Float.NaN, previousBottom;
+-    private boolean previousDark;
+-    private LinearGradient rim;
++    private RuntimeShader rim;
++    private boolean rimFailed;
++    private boolean recorded;
++    private final RectF recordedBounds = new RectF();
++    private int recordedTint;
++
++    // Draw the panel's already-rendered lens and tint into the indicator's second pass.
++    void drawRecordedBackdrop(Canvas canvas, float l, float t, float r, float b) {
++        if (!recorded) return;
++        float radius = Math.min(recordedBounds.width(), recordedBounds.height()) / 2f;
++        int save = canvas.save();
++        try {
++            clip.rewind();
++            clip.addRoundRect(recordedBounds, radius, radius, Path.Direction.CW);
++            canvas.clipPath(clip);
++            canvas.drawRenderNode(node);
++            paint.setColor(recordedTint);
++            canvas.drawRoundRect(recordedBounds, radius, radius, paint);
++        } finally {
++            canvas.restoreToCount(save);
++        }
++    }
+
+     void draw(Canvas canvas, RectF bounds, float dp, Backdrop source, int base, int tint,
+               float blurDp, float heightDp, float amountDp, float dispersion,
+               float press, float touchX, float touchY, boolean dark) throws ReflectiveOperationException {
++        recorded = false;
+         if (bounds.isEmpty()) return;
+         float radius = Math.min(bounds.width(), bounds.height()) / 2f;
+         paint.setColor(base);
+@@ -90,6 +110,9 @@
+                     clip.addRoundRect(bounds, radius, radius, Path.Direction.CW);
+                     canvas.clipPath(clip);
+                     canvas.drawRenderNode(node);
++                    recorded = true;
++                    recordedBounds.set(bounds);
++                    recordedTint = tint;
+                 } finally {
+                     canvas.restoreToCount(save);
+                 }
+@@ -111,34 +134,45 @@
+                 float touchX, float touchY, boolean dark) {
+         if (bounds.isEmpty()) return;
+         if (press > .01f) {
+-            int alpha = (int) (Math.min(1f, press) * (dark ? 99 : 72));
++            float progress = Math.min(1f, press);
++            paint.setBlendMode(BlendMode.PLUS);
++            paint.setColor(0x00FFFFFF | Math.round(20 * progress) << 24);
++            canvas.drawRoundRect(bounds, radius, radius, paint);
+             paint.setColor(Color.WHITE);
++            int alpha = Math.round(38 * progress);
+             paint.setShader(new RadialGradient(touchX, touchY,
+-                    Math.max(bounds.width() * .5f, bounds.height()), alpha << 24 | 0xFFFFFF,
+-                    0x00FFFFFF, Shader.TileMode.CLAMP));
++                    Math.min(bounds.width(), bounds.height()) * 1.5f,
++                    new int[]{alpha << 24 | 0xFFFFFF, alpha << 24 | 0xFFFFFF, 0x00FFFFFF},
++                    new float[]{0, .48f, 1}, Shader.TileMode.CLAMP));
+             canvas.drawRoundRect(bounds, radius, radius, paint);
+             paint.setShader(null);
++            paint.setBlendMode(null);
+         }
+
+-        if (rim == null || previousTop != bounds.top || previousBottom != bounds.bottom
+-                || previousDark != dark) {
+-            previousTop = bounds.top;
+-            previousBottom = bounds.bottom;
+-            previousDark = dark;
+-            rim = new LinearGradient(0, bounds.top, 0, bounds.bottom,
+-                    dark ? new int[]{0xA9FFFFFF, 0x1AFFFFFF, 0x62D0E2FF}
+-                         : new int[]{0xE7FFFFFF, 0x2AFFFFFF, 0x4E516E9D},
+-                    new float[]{0, .52f, 1}, Shader.TileMode.CLAMP);
++        if (radius <= 0 || !canvas.isHardwareAccelerated() || rimFailed) return;
++        try {
++            if (rim == null) {
++                rim = new RuntimeShader(Refraction.HIGHLIGHT);
++                rim.setFloatUniform("angle", (float) (-Math.PI / 3));
++                rim.setFloatUniform("falloff", 3.5f);
++            }
++            rim.setFloatUniform("origin", bounds.left, bounds.top);
++            rim.setFloatUniform("size", bounds.width(), bounds.height());
++            rim.setFloatUniform("cornerRadii", radius, radius, radius, radius);
++            rim.setColorUniform("color", dark ? 0xB4FFFFFF : 0xE0FFFFFF);
++            paint.setColor(Color.WHITE);
++            paint.setShader(rim);
++            paint.setStrokeWidth(dp);
++            paint.setStyle(Paint.Style.STROKE);
++            float inset = dp * .5f;
++            canvas.drawRoundRect(bounds.left + inset, bounds.top + inset,
++                    bounds.right - inset, bounds.bottom - inset, radius - inset, radius - inset, paint);
++        } catch (IllegalArgumentException | IllegalStateException error) {
++            rimFailed = true;
++            android.util.Log.w("GlassifyKyant", "Highlight shader unavailable", error);
++        } finally {
++            paint.setStyle(Paint.Style.FILL);
++            paint.setShader(null);
+         }
+-        paint.setColor(Color.WHITE);
+-        paint.setShader(rim);
+-        paint.setStrokeWidth(.8f * dp);
+-        paint.setStyle(Paint.Style.STROKE);
+-        float inset = .6f * dp;
+-        canvas.drawRoundRect(bounds.left + inset, bounds.top + inset,
+-                bounds.right - inset, bounds.bottom - inset,
+-                Math.max(0, radius - inset), Math.max(0, radius - inset), paint);
+-        paint.setStyle(Paint.Style.FILL);
+-        paint.setShader(null);
+     }
+ }
 --- a/extensions/kyant_liquid_glass/1.0/native/LiquidGlass.java
 +++ b/extensions/kyant_liquid_glass/1.0/native/LiquidGlass.java
-@@ -138,32 +138,54 @@
-         fabSub = field(fab, "isSubButton");
-     }
+@@ -4,6 +4,8 @@
+ import android.content.Context;
+ import android.graphics.Canvas;
+ import android.graphics.LinearGradient;
++import android.graphics.ColorFilter;
++import android.graphics.PixelFormat;
+ import android.graphics.Outline;
+ import android.graphics.Paint;
+ import android.graphics.Rect;
+@@ -25,6 +27,7 @@
+ import java.lang.reflect.InvocationTargetException;
+ import java.lang.reflect.Method;
+ import java.util.ArrayList;
++import java.util.List;
+ import java.util.WeakHashMap;
 
+ import de.robv.android.xposed.XC_MethodHook;
+@@ -38,6 +41,15 @@
+     private static final WeakHashMap<View, Button> buttons = new WeakHashMap<>();
+     private static final String DRAW_FRAME = "glassify.kyant.drawFrame";
+     private static final String STOCK_SELECTOR = "glassify.kyant.stockSelector";
++    private static final String STOCK_PAINT = "glassify.kyant.stockPaint";
++    private static final Shader CLEAR_SHADER = new LinearGradient(0, 0, 0, 1, 0, 0, Shader.TileMode.CLAMP);
++    private static final WeakHashMap<View, Face> faces = new WeakHashMap<>();
++    private static final WeakHashMap<View, WeakReference<View>> composers = new WeakHashMap<>();
++    private static final WeakHashMap<Object, WeakReference<Object>> fabCaptures = new WeakHashMap<>();
++    private static final int STANDARD_BUTTON = 0;
++    private static final int COMPOSER_FACE = 1;
++    private static final int FLOATING_FACE = 2;
++    private static final ArrayList<Class<?>> micClasses = new ArrayList<>();
+     private static final String STOCK_DIVIDER = "glassify.kyant.stockDivider";
+     private static final int DEFAULT_LIGHT = 0xFFF7F8FB;
+     private static final int DEFAULT_DARK = 0xFF1B1C21;
+@@ -45,7 +57,14 @@
+     private static Class<?> mainActivity, tabLayout, glassTab, blurDrawable, roundButton, fab, send;
+     private static Field mainTabs, swipe, dragging, dragX, dragOffset, tabSkip, layoutSelector, layoutDivider;
+     private static Field backgroundColor, roundBackground, sendRect, sendPaint, sendNew;
+-    private static Field fabSub;
++    private static Field fabSub, fabTint, dialogsFactory, mainFab, storiesFab;
++    private static Field chatEnter, parentChat, sendView, attachView, emojiView, micView, micForbidden, expandStickers;
++    private static Class<?> chat, composer, dialogs;
++    private static Field factoryEngine, dialogNoise;
++    private static Method chatFactory, createCapture, setCaptureOutset, unregisterCapture;
++    private static Method getThemedColor, getFragmentView, computeRect;
++    private static int sendColorKey;
++    private static Canvas currentSendCanvas;
+     private static Method findSelected, syncGlass, syncTheme, resolveSource, getSource, sourceDraw;
+     private static Method offsetX, offsetY, paddedBounds, themeDark, stockBlurDraw;
+     private static boolean dark;
+@@ -65,7 +84,14 @@
+             installTabs();
+             installButtons();
+             Class<?> launchActivity = context.getClassLoader().loadClass("org.telegram.ui.LaunchActivity");
+-            attachTabs(launchActivity.getMethod("getLastFragment").invoke(null));
++            Object fragment = launchActivity.getMethod("getLastFragment").invoke(null);
++            attachTabs(fragment);
++            attachChat(fragment);
++            if (mainActivity.isInstance(fragment)) {
++                attachDialogs(mainActivity.getMethod("getDialogsActivity").invoke(fragment));
++            } else {
++                attachDialogs(fragment);
++            }
+         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
+             onUnload();
+             throw error;
+@@ -89,8 +115,16 @@
+         });
+         buttons.forEach((view, state) -> {
+             state.pressSpring.cancel();
++            state.releaseCapture(view);
+             view.invalidate();
+         });
++        faces.forEach((view, face) -> {
++            if (view.getBackground() == face) view.setBackground(face.stock);
++        });
++        faces.clear();
++        composers.clear();
++        fabCaptures.clear();
++        micClasses.clear();
+         tabs.clear();
+         bars.clear();
+         buttons.clear();
+@@ -136,34 +170,84 @@
+         sendRect = field(send, "backgroundRect");
+         sendPaint = field(send, "backgroundPaint");
+         fabSub = field(fab, "isSubButton");
++        fabTint = field(fab, "themedBackgroundColor");
++        dialogs = loader.loadClass(ui + "DialogsActivity");
++        dialogsFactory = field(dialogs, "iBlur3FactoryLiquidGlass");
++        mainFab = field(dialogs, "floatingButton3");
++        storiesFab = field(dialogs, "floatingButtonStories");
++        chat = loader.loadClass(ui + "ChatActivity");
++        composer = loader.loadClass(components + "ChatActivityEnterView");
++        chatEnter = field(chat, "chatActivityEnterView");
++        parentChat = field(composer, "parentFragment");
++        sendView = field(composer, "sendButton");
++        attachView = field(composer, "attachButton");
++        emojiView = field(composer, "emojiButton");
++        micView = field(composer, "audioVideoButtonContainer");
++        micForbidden = field(composer, "audioVideoButtonContainerForbidden");
++        expandStickers = field(composer, "expandStickersButton");
++        sendColorKey = loader.loadClass(ui + "ActionBar.Theme").getField("key_chat_messagePanelSend").getInt(null);
++        getThemedColor = composer.getMethod("getThemedColor", int.class);
++        chatFactory = chat.getMethod("getGlassBackgroundDrawableFactory");
++        Class<?> factory = loader.loadClass(components + "blur3.BlurredBackgroundDrawableViewFactory");
++        createCapture = factory.getMethod("create", View.class);
++        factoryEngine = field(factory, "engine");
++        setCaptureOutset = blurDrawable.getMethod("setOutset", int.class, int.class);
++        unregisterCapture = loader.loadClass("org.telegram.utils.glass.GlassEngine").getMethod(
++                "unregisterDrawable", loader.loadClass("org.telegram.utils.glass.GlassDrawable"));
++        dialogNoise = field(dialogs, "scrollableViewNoiseSuppressor");
++        getFragmentView = dialogs.getMethod("getFragmentView");
++        computeRect = loader.loadClass(components + "chat.ViewPositionWatcher").getMethod(
++                "computeRectInParent", View.class, View.class, RectF.class);
++    }
++
 +    // exteraGram's binary hook API exposes public callbacks with no checked exceptions.
 +    private abstract static class UiHook extends XC_MethodHook {
 +        @Override public final void beforeHookedMethod(MethodHookParam param) {
@@ -24,8 +262,8 @@
 +
 +        void before(MethodHookParam param) throws ReflectiveOperationException {}
 +        void after(MethodHookParam param) throws ReflectiveOperationException {}
-+    }
-+
+     }
+
      private static void installTabs() throws ReflectiveOperationException {
 -        XC_MethodHook attach = new XC_MethodHook() {
 -            @Override protected void afterHookedMethod(MethodHookParam p) throws Throwable {
@@ -63,7 +301,7 @@
                  ViewGroup view = (ViewGroup) p.thisObject;
                  Tabs state = tabs.get(view);
                  Canvas canvas = (Canvas) p.args[0];
-@@ -190,7 +212,7 @@
+@@ -190,7 +274,7 @@
                      drawError(error);
                  }
              }
@@ -72,7 +310,7 @@
                  Object saved = p.getObjectExtra(STOCK_SELECTOR);
                  if (saved != null) layoutSelector.setBoolean(p.thisObject, (boolean) saved);
                  saved = p.getObjectExtra(STOCK_DIVIDER);
-@@ -198,8 +220,8 @@
+@@ -198,8 +282,8 @@
              }
          }, Canvas.class);
 
@@ -83,7 +321,7 @@
                  View view = (View) p.thisObject;
                  if (!(view.getParent() instanceof View)) return;
                  Tabs state = tabs.get((View) view.getParent());
-@@ -207,14 +229,14 @@
+@@ -207,14 +291,14 @@
                  p.setObjectExtra(STOCK_SELECTOR, tabSkip.getBoolean(view));
                  tabSkip.setBoolean(view, true);
              }
@@ -101,7 +339,7 @@
                  Drawable drawable = (Drawable) p.thisObject;
                  Canvas canvas = (Canvas) p.args[0];
                  if (!canvas.isHardwareAccelerated()) return;
-@@ -254,8 +276,8 @@
+@@ -254,23 +338,219 @@
          hook(roundButton, "draw", drawButton(0), Canvas.class);
          hook(fab, "draw", drawButton(1), Canvas.class);
          hook(send, "onDraw", drawButton(2), Canvas.class);
@@ -112,7 +350,213 @@
                  if (currentSend == null || currentSend.view.get() != p.thisObject) return;
                  Paint paint = (Paint) sendPaint.get(p.thisObject);
                  RectF rect = (RectF) sendRect.get(p.thisObject);
-@@ -269,8 +291,8 @@
+-                if (rect.isEmpty()) return;
+-                currentSend.savedShader = paint.getShader();
+-                currentSend.sendShaderChanged = true;
+-                paint.setShader(currentSend.gradient(rect, paint.getColor()));
++                if (rect.isEmpty() || currentSend.capture == null) return;
+                 currentSend.bounds.set(rect);
++                if (currentSend.drawAction(currentSendCanvas, paint.getColor(), false)) {
++                    currentSend.savedShader = paint.getShader();
++                    currentSend.sendShaderChanged = true;
++                    paint.setShader(CLEAR_SHADER);
++                }
+             }
+         });
++        UiHook bindChat = new UiHook() {
++            @Override void after(MethodHookParam p) throws ReflectiveOperationException {
++                if (!p.hasThrowable()) attachChat(p.thisObject);
++            }
++        };
++        hook(chat, "createView", bindChat, Context.class);
++        hook(chat, "onResume", bindChat);
++        hook(chat, "onFragmentDestroy", new UiHook() {
++            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
++                View enter = (View) chatEnter.get(p.thisObject);
++                if (enter == null) return;
++                forgetButton((View) sendView.get(enter));
++                forgetButton((View) attachView.get(enter));
++                forgetButton((View) emojiView.get(enter));
++                forgetButton((View) micView.get(enter));
++            }
++        });
++        hook(composer, "updateColors", new UiHook() {
++            @Override void after(MethodHookParam p) throws ReflectiveOperationException {
++                if (!p.hasThrowable()) attachComposer((View) p.thisObject);
++            }
++        });
++        UiHook bindDialogs = new UiHook() {
++            @Override void after(MethodHookParam p) throws ReflectiveOperationException {
++                if (!p.hasThrowable()) attachDialogs(p.thisObject);
++            }
++        };
++        hook(dialogs, "createView", bindDialogs, Context.class);
++        hook(dialogs, "onResume", bindDialogs);
++        hook(dialogs, "onFragmentDestroy", new UiHook() {
++            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
++                fabCaptures.remove(dialogNoise.get(p.thisObject));
++                forgetButton((View) mainFab.get(p.thisObject));
++                forgetButton((View) storiesFab.get(p.thisObject));
++            }
++        });
++        hook(fab, "updateColors", new UiHook() {
++            @Override void after(MethodHookParam p) {
++                View view = (View) p.thisObject;
++                Button button = buttons.get(view);
++                if (button != null && button.capture != null) installFace(view, button, FLOATING_FACE);
++            }
++        });
++        hook(dialogNoise.getType(), "setupRenderNodes", new UiHook() {
++            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
++                WeakReference<Object> ref = fabCaptures.get(p.thisObject);
++                Object fragment = ref == null ? null : ref.get();
++                View root = fragment == null ? null : (View) getFragmentView.invoke(fragment);
++                if (root == null) return;
++                RectF union = new RectF();
++                captureFab(union, (View) mainFab.get(fragment), root);
++                captureFab(union, (View) storiesFab.get(fragment), root);
++                if (union.isEmpty()) return;
++                List<?> original = (List<?>) p.args[0];
++                int count = (int) p.args[1];
++                if (count < 1 || count > original.size()) return;
++                List<RectF> positions = new ArrayList<>();
++                for (int i = 0; i < count; i++) positions.add((RectF) original.get(i));
++                if (count == 2) {
++                    union.union(positions.get(1));
++                    positions.set(1, union);
++                } else {
++                    positions.add(union);
++                }
++                p.args[0] = positions;
++                p.args[1] = positions.size();
++            }
++        }, List.class, int.class);
++        UiHook trackTouch = new UiHook() {
++            @Override void before(MethodHookParam p) {
++                Button button = buttons.get((View) p.thisObject);
++                if (button != null) button.track((MotionEvent) p.args[0]);
++            }
++        };
++        for (Class<?> owner : new Class<?>[]{View.class, ViewGroup.class}) {
++            try {
++                hook(owner, "dispatchTouchEvent", trackTouch, MotionEvent.class);
++            } catch (RuntimeException unavailable) {
++                Log.w(TAG, "Direct touch observation unavailable for " + owner.getSimpleName(), unavailable);
++            }
++        }
++    }
++
++    private static void captureFab(RectF union, View button, View root) throws ReflectiveOperationException {
++        if (button == null || button.getVisibility() != View.VISIBLE || button.getAlpha() <= 0) return;
++        RectF area = new RectF();
++        if ((boolean) computeRect.invoke(null, button, root, area) && !area.isEmpty()) {
++            float padding = 28 * dp(button);
++            area.inset(-padding, -padding);
++            if (area.intersect(0, 0, root.getWidth(), root.getHeight())) union.union(area);
++        }
++    }
++
++    private static void attachChat(Object fragment) throws ReflectiveOperationException {
++        if (chat.isInstance(fragment)) attachComposer((View) chatEnter.get(fragment));
++    }
++
++    private static void attachComposer(View enter) throws ReflectiveOperationException {
++        if (enter == null) return;
++        Object parent = parentChat.get(enter);
++        if (!chat.isInstance(parent)) return;
++        Object factory = chatFactory.invoke(parent);
++        if (factory == null) return;
++        registerButton((View) sendView.get(enter), factory, STANDARD_BUTTON);
++        registerButton((View) attachView.get(enter), factory, COMPOSER_FACE);
++        registerButton((View) emojiView.get(enter), factory, COMPOSER_FACE);
++        View mic = (View) micView.get(enter);
++        if (mic != null) {
++            registerButton(mic, factory, STANDARD_BUTTON);
++            composers.put(mic, new WeakReference<>(enter));
++            installMic(mic.getClass());
++        }
++    }
++
++    private static void attachDialogs(Object fragment) throws ReflectiveOperationException {
++        if (!dialogs.isInstance(fragment)) return;
++        Object factory = dialogsFactory.get(fragment);
++        if (factory == null) return;
++        Object noise = dialogNoise.get(fragment);
++        if (noise != null) fabCaptures.put(noise, new WeakReference<>(fragment));
++        registerButton((View) mainFab.get(fragment), factory, FLOATING_FACE);
++        registerButton((View) storiesFab.get(fragment), factory, FLOATING_FACE);
++    }
++
++    private static void registerButton(View view, Object factory, int faceKind) throws ReflectiveOperationException {
++        if (view == null) return;
++        Button button = buttons.computeIfAbsent(view, Button::new);
++        if (button.capture == null && view.isAttachedToWindow()) {
++            button.createCapture(view, factory);
++        } else if (button.capture == null) {
++            button.attachCapture(view, factory);
++        }
++        if (faceKind != STANDARD_BUTTON) installFace(view, button, faceKind);
++    }
++
++    private static void forgetButton(View view) {
++        if (view == null) return;
++        Button button = buttons.remove(view);
++        if (button != null) {
++            button.pressSpring.cancel();
++            button.releaseCapture(view);
++        }
++        composers.remove(view);
++        Face face = faces.remove(view);
++        if (face != null && view.getBackground() == face) view.setBackground(face.stock);
++        view.invalidate();
++    }
++
++    private static void installFace(View view, Button button, int kind) {
++        Drawable current = view.getBackground();
++        if (current instanceof Face) return;
++        Face face = new Face(button, current, kind);
++        faces.put(view, face);
++        view.setBackground(face);
++    }
++
++    private static void installMic(Class<?> owner) throws ReflectiveOperationException {
++        if (micClasses.contains(owner)) return;
++        Field micPaint = field(owner, "paint");
++        hook(owner, "dispatchDraw", new UiHook() {
++            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
++                View view = (View) p.thisObject;
++                Button button = buttons.get(view);
++                WeakReference<View> ref = composers.get(view);
++                View enter = ref == null ? null : ref.get();
++                Canvas canvas = (Canvas) p.args[0];
++                if (button == null || enter == null || micForbidden.getBoolean(enter)
++                        || button.capture == null || !canvas.isHardwareAccelerated() || view.getWidth() <= 0) return;
++                View expand = (View) expandStickers.get(enter);
++                float scale = expand != null && expand.getVisibility() == View.VISIBLE ? 1f - expand.getAlpha() : 1f;
++                float edge = 40 * button.dp;
++                float top = (view.getHeight() - edge) / 2f;
++                button.bounds.set(view.getWidth() - edge, top, view.getWidth(), top + edge);
++                button.setPressed(view.isPressed() && view.isEnabled());
++                int color = (int) getThemedColor.invoke(enter, sendColorKey);
++                int save = canvas.save();
++                try {
++                    canvas.scale(scale, scale, button.bounds.centerX(), button.bounds.centerY());
++                    button.transform(canvas, view);
++                    if (scale > 0 && button.drawAction(canvas, color, false)) {
++                        Paint paint = (Paint) micPaint.get(view);
++                        p.setObjectExtra(STOCK_PAINT, new Shader[]{paint.getShader()});
++                        paint.setShader(CLEAR_SHADER);
++                    }
++                } finally {
++                    canvas.restoreToCount(save);
++                }
++            }
++            @Override void after(MethodHookParam p) throws ReflectiveOperationException {
++                Shader[] saved = (Shader[]) p.getObjectExtra(STOCK_PAINT);
++                if (saved != null) ((Paint) micPaint.get(p.thisObject)).setShader(saved[0]);
++            }
++        }, Canvas.class);
++        micClasses.add(owner);
      }
 
      private static XC_MethodHook drawButton(int kind) {
@@ -123,7 +567,14 @@
                  View view = (View) p.thisObject;
                  Canvas canvas = (Canvas) p.args[0];
                  if (!canvas.isHardwareAccelerated() || !view.isAttachedToWindow()
-@@ -308,7 +330,7 @@
+@@ -302,13 +582,14 @@
+                         if (radius >= 0) state.radius = radius;
+                     }
+                 } else {
++                    currentSendCanvas = canvas;
+                     currentSend = state;
+                     state.bounds.setEmpty();
+                     state.radius = 20 * state.dp;
                  }
              }
 
@@ -132,3 +583,368 @@
                  Button state = (Button) p.getObjectExtra(DRAW_FRAME);
                  if (state == null) return;
                  Canvas canvas = (Canvas) p.args[0];
+@@ -317,15 +598,16 @@
+                         currentRoundBackground = null;
+                         currentRound = null;
+                     } else if (kind == 1 && !p.hasThrowable()) {
+-                        state.finish(canvas);
++                        if (!(((View) p.thisObject).getBackground() instanceof Face)) state.finish(canvas);
+                     } else if (kind == 2) {
+                         currentSend = null;
++                        currentSendCanvas = null;
+                         if (state.sendShaderChanged) {
+                             ((Paint) sendPaint.get(p.thisObject)).setShader(state.savedShader);
+                             state.sendShaderChanged = false;
+                             state.savedShader = null;
+                         }
+-                        if (!p.hasThrowable()) state.finish(canvas);
++                        if (!p.hasThrowable() && state.capture == null) state.finish(canvas);
+                     }
+                 } finally {
+                     canvas.restoreToCount(state.save);
+@@ -406,12 +688,15 @@
+         @Override public void draw(Canvas canvas, float l, float t, float r, float b)
+                 throws ReflectiveOperationException {
+             if (source == null) return;
++            int save = canvas.save();
+             canvas.translate(-x, -y);
+             try {
+                 sourceDraw.invoke(source, canvas, l + x, t + y, r + x, b + y);
+             } catch (InvocationTargetException error) {
+                 // Capture may be recording during a page transition. The base was recorded first.
+                 if (!(error.getCause() instanceof IllegalStateException)) throw error;
++            } finally {
++                canvas.restoreToCount(save);
+             }
+         }
+     }
+@@ -435,8 +720,8 @@
+         Tabs(View view, boolean stockSwipe) {
+             this.dp = dp(view);
+             this.stockSwipe = stockSwipe;
+-            centerSpring = spring(center, view, 400, .75f, .25f);
+-            pressSpring = spring(press, view, 650, .78f, .004f);
++            centerSpring = spring(center, view, 1000, 1f, .25f);
++            pressSpring = spring(press, view, 1000, 1f, .004f);
+         }
+
+         void touch(View view, MotionEvent event) {
+@@ -463,7 +748,7 @@
+             if (!sample.resolve(drawable) || !panelBounds(view)) return false;
+             dark = (boolean) themeDark.invoke(null);
+             int base = dark ? DEFAULT_DARK : DEFAULT_LIGHT;
+-            float tintAlpha = Math.max(.32f, Math.min(.54f, (sample.tint >>> 24) / 255f));
++            float tintAlpha = dark ? .40f : .34f;
+             int tint = opacity(sample.tint == 0 ? base : sample.tint, tintAlpha);
+             panel.draw(canvas, panelBounds, dp, sample, base, tint, 8, 24, 24, 0,
+                     held ? press.getValue() * .55f : 0, touchX, touchY, dark);
+@@ -507,7 +792,7 @@
+             target = selectedCenter;
+             wasDragging = drag;
+
+-            boolean tracking = (held && Math.abs(touchX - selectedCenter) <= selected.getWidth() / 2f) || drag;
++            boolean tracking = held || drag || centerSpring.isRunning();
+             float targetPress = tracking && animations ? 1f : 0f;
+             if (!animations) {
+                 pressSpring.cancel();
+@@ -518,9 +803,9 @@
+             float amount = Math.max(0, Math.min(1, press.getValue()));
+             float cx = center.getValue();
+             // Cap the stretch at the edge of the panel to keep the glass out of the system inset.
+-            float stretch = 1f + .15f * amount;
++            float stretch = 1f + .32f * amount;
+             float w = Math.min(panelBounds.width() - 4 * dp, (selected.getWidth() - 4 * dp) * stretch);
+-            float h = Math.min(panelBounds.height() - 4 * dp, selected.getHeight() * (.88f + .17f * amount));
++            float h = Math.min(panelBounds.height() - 4 * dp, selected.getHeight() * (.95f + .27f * amount));
+             if (w <= 0 || h <= 0) {
+                 setHideStock(view, false);
+                 return false;
+@@ -532,10 +817,20 @@
+             int base = dark ? DEFAULT_DARK : DEFAULT_LIGHT;
+             int tint = dark ? opacity(0xFF94BFFF, .13f + .11f * amount)
+                             : opacity(0xFF5675A1, .12f + .10f * amount);
+-            indicator.draw(canvas, tabBounds, dp, sample, base, tint, 0,
+-                    10, 14, .25f + .5f * amount, amount, cx, cy, dark);
++            if (amount < .01f) {
++                indicator.draw(canvas, tabBounds, dp, null, 0, tint, 0, 0, 0, 0, 0, cx, cy, dark);
++            } else {
++                indicator.draw(canvas, tabBounds, dp, this::drawIndicatorSource, base, tint, 0,
++                        10 * amount, 14 * amount, 1f, amount, cx, cy, dark);
++            }
+             setHideStock(view, true);
+             return true;
++        }
++
++        void drawIndicatorSource(Canvas canvas, float l, float t, float r, float b)
++                throws ReflectiveOperationException {
++            sample.draw(canvas, l, t, r, b);
++            panel.drawRecordedBackdrop(canvas, l, t, r, b);
+         }
+
+         void setHideStock(ViewGroup view, boolean hide) {
+@@ -557,15 +852,17 @@
+         float radius;
+         Shader savedShader;
+         boolean sendShaderChanged;
+-        LinearGradient gradient;
+-        float gradientTop, gradientBottom;
+-        int gradientColor;
++        Drawable capture;
++        WeakReference<Object> captureEngine;
++        View.OnAttachStateChangeListener waiting;
++        boolean tracking;
++        float touchX, touchY, startX, startY;
+         int save;
+
+         Button(View view) {
+             this.view = new WeakReference<>(view);
+             dp = dp(view);
+-            pressSpring = spring(press, view, 500, .68f, .004f);
++            pressSpring = spring(press, view, 300, .5f, .004f);
+         }
+
+         void setPressed(boolean pressed) {
+@@ -574,15 +871,23 @@
+                 press.setValue(0f);
+                 return;
+             }
+-            float value = pressed ? 1f : 0f;
++            float value = tracking || pressed ? 1f : 0f;
+             if (pressSpring.getSpring().getFinalPosition() != value) pressSpring.animateToFinalPosition(value);
+         }
+
+         void transform(Canvas canvas, View view) {
+             float cx = view.getWidth() / 2f;
+             float cy = view.getHeight() / 2f;
+-            float scale = press.getValue() * Math.min(.11f, 4 * dp / view.getHeight());
+-            canvas.scale(1 + scale, 1 + scale, cx, cy);
++            float height = view.getHeight(), width = view.getWidth();
++            float size = Math.min(width, height), span = Math.max(width, height);
++            if (size <= 0) return;
++            float dx = (touchX - startX) * press.getValue(), dy = (touchY - startY) * press.getValue();
++            float scale = 1 + press.getValue() * 4 * dp / height;
++            float angle = (float) Math.atan2(dy, dx);
++            canvas.translate((float) (size * Math.tanh(.05 * dx / size)),
++                    (float) (size * Math.tanh(.05 * dy / size)));
++            canvas.scale(scale + 4 * dp / height * Math.abs((float) Math.cos(angle) * dx / span) * Math.min(1, width / height),
++                    scale + 4 * dp / height * Math.abs((float) Math.sin(angle) * dy / span) * Math.min(1, height / width), cx, cy);
+         }
+
+         boolean drawRound(Canvas canvas, Drawable drawable) throws ReflectiveOperationException {
+@@ -596,17 +901,80 @@
+             return true;
+         }
+
+-        LinearGradient gradient(RectF rect, int color) {
+-            if (gradient == null || gradientTop != rect.top || gradientBottom != rect.bottom
+-                    || gradientColor != color) {
+-                gradientTop = rect.top;
+-                gradientBottom = rect.bottom;
+-                gradientColor = color;
+-                gradient = new LinearGradient(0, rect.top, 0, rect.bottom,
+-                        new int[]{mix(color, 255, .10f), color, mix(color, 0, .15f)},
+-                        new float[]{0, .45f, 1}, Shader.TileMode.CLAMP);
+-            }
+-            return gradient;
++        void createCapture(View view, Object factory) throws ReflectiveOperationException {
++            captureEngine = new WeakReference<>(factoryEngine.get(factory));
++            capture = (Drawable) createCapture.invoke(factory, view);
++            int padding = Math.round(28 * dp);
++            setCaptureOutset.invoke(capture, padding, padding);
++        }
++
++        void releaseCapture(View view) {
++            if (waiting != null) view.removeOnAttachStateChangeListener(waiting);
++            Object engine = captureEngine == null ? null : captureEngine.get();
++            if (capture != null && engine != null) {
++                try {
++                    unregisterCapture.invoke(engine, capture);
++                } catch (ReflectiveOperationException | RuntimeException error) {
++                    Log.w(TAG, "Could not unregister backdrop capture", error);
++                }
++            }
++            capture = null;
++        }
++
++        void attachCapture(View view, Object factory) {
++            if (waiting != null) return;
++            waiting = new View.OnAttachStateChangeListener() {
++                @Override public void onViewAttachedToWindow(View view) {
++                    view.removeOnAttachStateChangeListener(this);
++                    waiting = null;
++                    try {
++                        createCapture(view, factory);
++                        view.invalidate();
++                    } catch (ReflectiveOperationException | RuntimeException error) {
++                        drawError(error);
++                    }
++                }
++                @Override public void onViewDetachedFromWindow(View view) {}
++            };
++            view.addOnAttachStateChangeListener(waiting);
++        }
++
++        void track(MotionEvent event) {
++            switch (event.getActionMasked()) {
++                case MotionEvent.ACTION_DOWN:
++                    tracking = true;
++                    touchX = startX = event.getX();
++                    touchY = startY = event.getY();
++                    break;
++                case MotionEvent.ACTION_MOVE:
++                    if (!tracking) return;
++                    touchX = event.getX();
++                    touchY = event.getY();
++                    break;
++                case MotionEvent.ACTION_CANCEL:
++                case MotionEvent.ACTION_UP:
++                    tracking = false;
++                    break;
++                default:
++                    return;
++            }
++            View target = view.get();
++            if (target != null) target.invalidate();
++        }
++
++        boolean drawAction(Canvas canvas, int color, boolean neutral) throws ReflectiveOperationException {
++            View target = view.get();
++            if (target == null || capture == null || bounds.isEmpty() || !canvas.isHardwareAccelerated()) return false;
++            capture.setBounds(0, 0, target.getWidth(), target.getHeight());
++            if (!sample.resolve(capture)) return false;
++            boolean night = (boolean) themeDark.invoke(null);
++            int base = night ? DEFAULT_DARK : DEFAULT_LIGHT;
++            int tint = opacity(color, neutral ? (night ? .28f : .24f) : .77f);
++            float gx = tracking ? Math.max(bounds.left, Math.min(bounds.right, touchX)) : bounds.centerX();
++            float gy = tracking ? Math.max(bounds.top, Math.min(bounds.bottom, touchY)) : bounds.centerY();
++            surface.draw(canvas, bounds, dp, sample, base, tint, 2, 12, 24, 0,
++                    press.getValue(), gx, gy, night);
++            return true;
+         }
+
+         void finish(Canvas canvas) {
+@@ -614,11 +982,63 @@
+                     press.getValue(), bounds.centerX(), bounds.centerY(), dark);
+         }
+
+-        private static int mix(int color, int channel, float weight) {
+-            int r = Math.round(((color >>> 16) & 255) * (1 - weight) + channel * weight);
+-            int g = Math.round(((color >>> 8) & 255) * (1 - weight) + channel * weight);
+-            int b = Math.round((color & 255) * (1 - weight) + channel * weight);
+-            return color & 0xFF000000 | r << 16 | g << 8 | b;
+-        }
++    }
++
++    private static final class Face extends Drawable {
++        final Button button;
++        final Drawable stock;
++        final int kind;
++        private int alpha = 255;
++
++        Face(Button button, Drawable stock, int kind) {
++            this.button = button;
++            this.stock = stock;
++            this.kind = kind;
++        }
++
++        @Override public void draw(Canvas canvas) {
++            View view = button.view.get();
++            if (view == null || alpha == 0) return;
++            button.setPressed(view.isPressed() && view.isEnabled());
++            button.bounds.set(getBounds());
++            Rect r = getBounds();
++            int save = alpha == 255 ? canvas.save()
++                    : canvas.saveLayerAlpha(r.left, r.top, r.right, r.bottom, alpha);
++            try {
++                if (kind != FLOATING_FACE) {
++                    button.bounds.inset(2 * button.dp, 3 * button.dp);
++                    button.transform(canvas, view);
++                }
++                boolean night = (boolean) themeDark.invoke(null);
++                boolean neutral = kind != FLOATING_FACE || fabSub.getBoolean(view);
++                int color = neutral ? (night ? DEFAULT_DARK : DEFAULT_LIGHT) : fabTint.getInt(view);
++                if (button.drawAction(canvas, color, neutral)) return;
++            } catch (ReflectiveOperationException | RuntimeException error) {
++                drawError(error);
++            } finally {
++                canvas.restoreToCount(save);
++            }
++            if (stock != null) {
++                int backup = stock.getAlpha();
++                stock.setAlpha(backup * alpha / 255);
++                try {
++                    stock.setBounds(getBounds());
++                    stock.setState(getState());
++                    stock.draw(canvas);
++                } finally {
++                    stock.setAlpha(backup);
++                }
++            }
++        }
++
++        @Override public boolean isStateful() { return true; }
++        @Override protected boolean onStateChange(int[] state) { return true; }
++        @Override public boolean getPadding(Rect rect) { return stock != null && stock.getPadding(rect); }
++        @Override public int getMinimumHeight() { return stock == null ? 0 : stock.getMinimumHeight(); }
++        @Override public int getMinimumWidth() { return stock == null ? 0 : stock.getMinimumWidth(); }
++        @Override public void setAlpha(int alpha) { this.alpha = alpha; invalidateSelf(); }
++        @Override public int getAlpha() { return alpha; }
++        @Override public void setColorFilter(ColorFilter filter) { invalidateSelf(); }
++        @Override public int getOpacity() { return PixelFormat.TRANSLUCENT; }
+     }
+ }
+--- a/extensions/kyant_liquid_glass/1.0/native/Refraction.java
++++ b/extensions/kyant_liquid_glass/1.0/native/Refraction.java
+@@ -118,4 +118,52 @@
+             return color;
+         }
+         """;
++    static final String HIGHLIGHT = """
++        uniform float2 origin;
++        uniform float2 size;
++        uniform float4 cornerRadii;
++        layout(color) uniform half4 color;
++        uniform float angle;
++        uniform float falloff;
++
++        float radiusAt(float2 centeredCoord, float4 radii) {
++            if (centeredCoord.x >= 0.0) {
++                if (centeredCoord.y <= 0.0) return radii.y;
++                else return radii.z;
++            } else {
++                if (centeredCoord.y <= 0.0) return radii.x;
++                else return radii.w;
++            }
++        }
++
++        float sdRoundedRect(float2 coord, float2 halfSize, float radius) {
++            float2 cornerCoord = abs(coord) - (halfSize - float2(radius));
++            float outside = length(max(cornerCoord, 0.0)) - radius;
++            float inside = min(max(cornerCoord.x, cornerCoord.y), 0.0);
++            return outside + inside;
++        }
++
++        float2 gradSdRoundedRect(float2 coord, float2 halfSize, float radius) {
++            float2 cornerCoord = abs(coord) - (halfSize - float2(radius));
++            if (cornerCoord.x >= 0.0 || cornerCoord.y >= 0.0) {
++                return sign(coord) * (max(cornerCoord, 0.0) / max(length(max(cornerCoord, 0.0)), 0.0001));
++            } else {
++                float gradX = step(cornerCoord.y, cornerCoord.x);
++                return sign(coord) * float2(gradX, 1.0 - gradX);
++            }
++        }
++
++        half4 main(float2 coord) {
++            float2 halfSize = size * 0.5;
++            float2 centeredCoord = coord - origin - halfSize;
++            float radius = radiusAt(centeredCoord, cornerRadii);
++
++            float gradRadius = min(radius * 1.5, min(halfSize.x, halfSize.y));
++            float2 grad = gradSdRoundedRect(centeredCoord, halfSize, gradRadius);
++            float2 normal = float2(cos(angle), sin(angle));
++            float d = dot(grad, normal);
++            float intensity = pow(abs(d), falloff);
++            return color * intensity;
++        }
++        """;
+ }
