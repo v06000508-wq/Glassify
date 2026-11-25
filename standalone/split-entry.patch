@@ -1,0 +1,112 @@
+--- a/extensions/kyant_liquid_glass/1.0/native/LiquidGlass.java
++++ b/extensions/kyant_liquid_glass/1.0/native/LiquidGlass.java
+@@ -82,24 +82,36 @@
+     private static Drawable currentRoundBackground;
+     private static Button currentSend;
+
+-    // Glassify API 4 calls this on the UI thread using the app's classloader.
+-    public static void onLoad(Context context, Object unused) throws ReflectiveOperationException {
++    // Each standalone Python plugin owns its own InMemoryDexClassLoader.
++    public static void onLoad(Context context, Object feature) throws ReflectiveOperationException {
+         if (Build.VERSION.SDK_INT < 33) {
+             throw new IllegalStateException("Kyant Liquid Glass requires Android 13 or newer");
+         }
++        boolean bottomTabs = "tabs".equals(feature);
++        if (!bottomTabs && !"buttons".equals(feature)) {
++            throw new IllegalArgumentException("Unknown Kyant Liquid Glass feature");
++        }
+         if (!hooks.isEmpty()) return;
++
+         try {
+-            resolve(context.getClassLoader());
+-            installTabs();
+-            installButtons();
+-            Class<?> launchActivity = context.getClassLoader().loadClass("org.telegram.ui.LaunchActivity");
++            ClassLoader loader = context.getClassLoader();
++            resolveCommon(loader);
++            installBlurHook();
++            Class<?> launchActivity = loader.loadClass("org.telegram.ui.LaunchActivity");
+             Object fragment = launchActivity.getMethod("getLastFragment").invoke(null);
+-            attachTabs(fragment);
+-            attachChat(fragment);
+-            if (mainActivity.isInstance(fragment)) {
+-                attachDialogs(mainActivity.getMethod("getDialogsActivity").invoke(fragment));
++            if (bottomTabs) {
++                resolveTabs(loader);
++                installTabs();
++                attachTabs(fragment);
+             } else {
+-                attachDialogs(fragment);
++                resolveButtons(loader);
++                installButtons();
++                attachChat(fragment);
++                if (mainActivity.isInstance(fragment)) {
++                    attachDialogs(mainActivity.getMethod("getDialogsActivity").invoke(fragment));
++                } else {
++                    attachDialogs(fragment);
++                }
+             }
+         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
+             onUnload();
+@@ -140,17 +152,9 @@
+         loggedDrawError = false;
+     }
+
+-    private static void resolve(ClassLoader loader) throws ReflectiveOperationException {
+-        String ui = "org.telegram.ui.";
+-        String components = ui + "Components.";
+-        mainActivity = loader.loadClass(ui + "MainTabsActivity");
+-        tabLayout = loader.loadClass(ui + "MainTabsLayout");
+-        glassTab = loader.loadClass(components + "glass.GlassTabView");
+-        blurDrawable = loader.loadClass(components + "blur3.drawable.BlurredBackgroundDrawable");
+-        roundButton = loader.loadClass(components + "chat.buttons.ChatActivityBlurredRoundButton");
+-        fab = loader.loadClass(components + "FragmentFloatingButton");
+-        send = loader.loadClass(components + "ChatActivityEnterView$SendButton");
+-
++    private static void resolveTabs(ClassLoader loader) throws ReflectiveOperationException {
++        tabLayout = loader.loadClass("org.telegram.ui.MainTabsLayout");
++        glassTab = loader.loadClass("org.telegram.ui.Components.glass.GlassTabView");
+         mainTabs = field(mainActivity, "tabsView");
+         swipe = field(tabLayout, "swipeSelectionEnabled");
+         layoutSelector = field(tabLayout, "drawCustomSelector");
+@@ -165,7 +169,11 @@
+         isTabVisible = tabLayout.getMethod("isViewVisible", View.class);
+         finishMeasure = method(tabLayout.getSuperclass(), "calculateTotalSizesAfterMeasure");
+         setDimensions = method(View.class, "setMeasuredDimension", int.class, int.class);
+-
++    }
++
++    private static void resolveCommon(ClassLoader loader) throws ReflectiveOperationException {
++        mainActivity = loader.loadClass("org.telegram.ui.MainTabsActivity");
++        blurDrawable = loader.loadClass("org.telegram.ui.Components.blur3.drawable.BlurredBackgroundDrawable");
+         syncGlass = method(blurDrawable, "checkGlassSettings");
+         syncTheme = method(blurDrawable, "checkThemeColors");
+         resolveSource = blurDrawable.getMethod("shouldHaveDisplayList");
+@@ -176,7 +184,15 @@
+         offsetY = blurDrawable.getMethod("getSourceOffsetY");
+         paddedBounds = blurDrawable.getMethod("getBoundsWithPaddingInset", Rect.class);
+         backgroundColor = field(blurDrawable, "backgroundColor");
+-        themeDark = loader.loadClass(ui + "ActionBar.Theme").getMethod("isCurrentThemeDark");
++        themeDark = loader.loadClass("org.telegram.ui.ActionBar.Theme").getMethod("isCurrentThemeDark");
++    }
++
++    private static void resolveButtons(ClassLoader loader) throws ReflectiveOperationException {
++        String ui = "org.telegram.ui.";
++        String components = ui + "Components.";
++        roundButton = loader.loadClass(components + "chat.buttons.ChatActivityBlurredRoundButton");
++        fab = loader.loadClass(components + "FragmentFloatingButton");
++        send = loader.loadClass(components + "ChatActivityEnterView$SendButton");
+
+         roundBackground = field(roundButton, "backgroundDrawable");
+         sendNew = field(send, "isNewDesignSendButton");
+@@ -366,7 +382,9 @@
+                 if (saved != null) tabSkip.setBoolean(p.thisObject, (boolean) saved);
+             }
+         }, Canvas.class);
+-
++    }
++
++    private static void installBlurHook() throws ReflectiveOperationException {
+         hook(blurDrawable, "draw", new UiHook() {
+             @Override void before(MethodHookParam p) {
+                 Drawable drawable = (Drawable) p.thisObject;
