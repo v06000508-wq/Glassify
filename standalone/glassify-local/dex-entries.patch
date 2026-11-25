@@ -1,0 +1,36 @@
+--- /dev/null
++++ b/extensions/kyant_liquid_glass/1.0/native/BottomTabsEntry.java
+@@ -0,0 +1,15 @@
++package glassify.kyant;
++
++import android.content.Context;
++
++public final class BottomTabsEntry {
++    private BottomTabsEntry() {}
++
++    public static void onLoad(Context context, Object unused) throws ReflectiveOperationException {
++        LiquidGlass.onLoad(context, "tabs");
++    }
++
++    public static void onUnload() {
++        LiquidGlass.onUnload();
++    }
++}
+--- /dev/null
++++ b/extensions/kyant_liquid_glass/1.0/native/LiquidButtonsEntry.java
+@@ -0,0 +1,15 @@
++package glassify.kyant;
++
++import android.content.Context;
++
++public final class LiquidButtonsEntry {
++    private LiquidButtonsEntry() {}
++
++    public static void onLoad(Context context, Object unused) throws ReflectiveOperationException {
++        LiquidGlass.onLoad(context, "buttons");
++    }
++
++    public static void onUnload() {
++        LiquidGlass.onUnload();
++    }
++}
