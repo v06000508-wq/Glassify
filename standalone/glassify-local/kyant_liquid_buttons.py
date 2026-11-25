@@ -3,16 +3,16 @@
 GLASSIFY_EXTENSION = {
     "id": "kyant_liquid_buttons",
     "name": "Kyant Liquid Buttons",
-    "description": "Liquid Glass для кнопок чата, контактов и QR с физикой нажатия Telegram iOS.",
+    "description": "Liquid Glass для шапок, профиля и кнопок чата, контактов и QR с пружинной анимацией нажатия.",
     "version": "1.0",
     "api": 4,
     "min_glassify": "0.6.0-beta.7",
     "min_exteragram": "13.2.2"
 }
 
-_DEX_PATH = "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/local.kyant_liquid_buttons/1.0/payload/module.b64"
-_DEX_SHA256 = "f42372cbeda53ffcc3f219d8b6dfa374500de2fe0e574dcc35d1e0375a7b2074"
-_DEX_SIZE = 57788
+_DEX_PATH = "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/local.kyant_liquid_buttons/1.0/payload/header.module.b64"
+_DEX_SHA256 = "1c76cac0883bda0cc3407abea53fb63ffaac2937d3b1fc687a31ea7c231ec343"
+_DEX_SIZE = 65384
 _DEX_CLASS = "glassify.kyant.LiquidButtonsEntry"
 _handle = None
 

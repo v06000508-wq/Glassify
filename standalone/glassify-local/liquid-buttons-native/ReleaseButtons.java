@@ -22,6 +22,7 @@ import androidx.dynamicanimation.animation.SpringForce;
 
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
@@ -34,12 +35,16 @@ final class ReleaseButtons {
     private static final String UI = "org.telegram.ui.";
     private static final String TAG = "GlassifyLiquidButtons";
     private static final String SAVE = "kyant.release.canvas";
+    private static final String HEADER = "kyant.release.header";
     private static final String SCOPE = "kyant.release.backdrop";
     private static final int DAY = 0xFFF7F8FA;
     private static final int NIGHT = 0xFF202027;
     private static final ArrayList<XC_MethodHook.Unhook> hooks = new ArrayList<>();
     private static final WeakHashMap<View, Button> buttons = new WeakHashMap<>();
     private static final WeakHashMap<View, WeakReference<View>> touchTargets = new WeakHashMap<>();
+    private static final WeakHashMap<View, Header> headers = new WeakHashMap<>();
+    private static final WeakHashMap<View, ArrayList<Button>> profileActions = new WeakHashMap<>();
+    private static final WeakHashMap<View, Button> panels = new WeakHashMap<>();
     private static final WeakHashMap<ViewGroup, Clip> clips = new WeakHashMap<>();
     private static final WeakHashMap<View, QrState> qrStates = new WeakHashMap<>();
     private static final WeakHashMap<Object, WeakReference<Object>> dialogsCapture = new WeakHashMap<>();
@@ -49,13 +54,14 @@ final class ReleaseButtons {
     private static Field contactsFab, roundBackground, pageDownInner, factoryEngine;
     private static Method baseGlass, getFragmentView, createCapture, setOutset, engineInvalidate, unregister;
     private static Method syncGlass, syncTheme, resolveSource, getSource, sourceDraw, offsetX, offsetY, paddedBounds, darkTheme;
-    private static Field backgroundColor, ctaBackground;
+    private static Field backgroundColor, drawableProps, drawableRadii, ctaBackground, pinnedBackground, pinnedColor;
     private static Method rectangleInParent;
     private static Field[] qrRects, scannerRects;
     private static Field qrBlur, scannerBlur, scannerCamera, scannerGallery;
     private static Method qrHasBlur, qrDrawBlur, qrDrawPicture, qrTarget, scannerReady;
     private static QrState activeQr;
     private static ActiveGlass activeGlass;
+    private static Header activeHeader;
     private static Drawable skipFabBackdrop;
     private static boolean logged;
 
@@ -67,8 +73,7 @@ final class ReleaseButtons {
             resolve(loader);
             installFloating();
             installPageDown();
-            installBack(loader.loadClass(UI + "ActionBar.ActionBar"), "backButtonImageView", "glassDrawableBack");
-            installBack(loader.loadClass(UI + "ActionBar.SimpleActionBar"), "backButton", "glassBack");
+            installHeaders(loader);
             installQr();
             installConnect(loader);
             installTouch();
@@ -79,19 +84,24 @@ final class ReleaseButtons {
                         return;
                     }
                     ActiveGlass scope = activeGlass;
-                    if (scope == null || scope.drawable != p.thisObject) return;
+                    if (scope == null || (scope.drawable != null && scope.drawable != p.thisObject)) {
+                        scope = activeHeader == null ? null : activeHeader.find(p.thisObject);
+                    }
+                    if (scope == null) return;
                     Canvas canvas = (Canvas) p.args[0];
-                    if (!canvas.isHardwareAccelerated() || !scope.button.sample.resolve(scope.drawable)) return;
-                    RectF bounds = scope.button.bounds;
-                    bounds.set(scope.button.sample.padded);
+                    Drawable drawable = (Drawable) p.thisObject;
+                    Button button = scope.button;
+                    if (!canvas.isHardwareAccelerated() || !button.sample.resolve(drawable)) return;
+                    RectF bounds = button.bounds;
+                    bounds.set(button.sample.padded);
                     if (bounds.isEmpty()) return;
                     int save = canvas.save();
                     try {
-                        if (scope.moveGlass) scope.button.move(canvas, bounds);
+                        if (scope.moveGlass) button.move(canvas, bounds);
                         boolean dark = dark();
-                        int color = scope.button.sample.color;
-                        drawLiquid(canvas, scope.button, scope.button.sample, color == 0 ? base(dark) : color,
-                                dark, scope.drawable.getAlpha() / 255f, bounds);
+                        int color = button.sample.color;
+                        drawLiquid(canvas, button, button.sample, color == 0 ? base(dark) : color,
+                                dark, drawable.getAlpha() / 255f, bounds);
                         p.setResult(null);
                     } finally {
                         canvas.restoreToCount(save);
@@ -124,11 +134,18 @@ final class ReleaseButtons {
         clips.clear();
         buttons.clear();
         touchTargets.clear();
+        headers.keySet().forEach(View::invalidate);
+        headers.clear();
+        profileActions.keySet().forEach(View::invalidate);
+        profileActions.clear();
+        panels.keySet().forEach(View::invalidate);
+        panels.clear();
         qrStates.values().forEach(QrState::cancel);
         qrStates.clear();
         dialogsCapture.clear();
         activeQr = null;
         activeGlass = null;
+        activeHeader = null;
         skipFabBackdrop = null;
         logged = false;
     }
@@ -176,6 +193,8 @@ final class ReleaseButtons {
         offsetY = drawableClass.getMethod("getSourceOffsetY");
         paddedBounds = drawableClass.getMethod("getBoundsWithPaddingInset", Rect.class);
         backgroundColor = field(drawableClass, "backgroundColor");
+        drawableProps = field(drawableClass, "boundProps");
+        drawableRadii = field(drawableProps.getType(), "radii");
         darkTheme = loader.loadClass(UI + "ActionBar.Theme").getMethod("isCurrentThemeDark");
 
         qrViewClass = loader.loadClass(UI + "QrShare.QrShareView");
@@ -227,7 +246,7 @@ final class ReleaseButtons {
                 Button state = buttons.get(view);
                 Canvas canvas = (Canvas) p.args[0];
                 if (state == null || !canvas.isHardwareAccelerated()) return;
-                freeClipping(view, 3);
+                state.freeClipping(view, 3);
                 state.watchPress(view);
                 if (state.capture != null && !state.capture.getBounds().isEmpty()) {
                     p.setObjectExtra(SCOPE, new Object[]{skipFabBackdrop});
@@ -298,7 +317,7 @@ final class ReleaseButtons {
         if (view == null || factory == null) return;
         Button state = button(view);
         state.disableStockAnimator(view);
-        freeClipping(view, 3);
+        state.freeClipping(view, 3);
         state.useFace(view);
         state.bindCapture(view, factory);
     }
@@ -337,57 +356,162 @@ final class ReleaseButtons {
     private static Button bindPageDown(View wrapper, View view) {
         Button state = button(view);
         state.disableStockAnimator(wrapper);
-        touchTargets.put(wrapper, new WeakReference<>(view));
-        freeClipping(view, 2);
+        if (!touchTargets.containsKey(wrapper)) touchTargets.put(wrapper, new WeakReference<>(view));
+        state.freeClipping(view, 2);
         return state;
     }
 
-    private static void installBack(Class<?> actionBar, String buttonField, String glassField)
-            throws ReflectiveOperationException {
-        Field back = field(actionBar, buttonField);
-        Field backdrop = field(actionBar, glassField);
-        hook(actionBar, "dispatchDraw", new UiHook() {
+    private static void installHeaders(ClassLoader loader) throws ReflectiveOperationException {
+        Class<?> actionBar = loader.loadClass(UI + "ActionBar.ActionBar");
+        installHeader(actionBar, fields(actionBar, "backButtonImageView", "menu", "chatAvatarContainer"),
+                "glassDrawableBack", "glassDrawableMenu", "glassDrawable");
+        Class<?> simple = loader.loadClass(UI + "ActionBar.SimpleActionBar");
+        installHeader(simple, fields(simple, "backButton", "menu", "doneButton"), "glassBack", "glassMenu", "glassDone");
+
+        Class<?> item = loader.loadClass(UI + "ActionBar.ActionBarMenuItem");
+        hook(item, "onTouchEvent", new UiHook() {
+            @Override void before(MethodHookParam p) {
+                View child = (View) p.thisObject;
+                if (!child.isEnabled() || !(child.getParent() instanceof View menu)) return;
+                if (!(menu.getParent() instanceof View bar)) return;
+                Header header = headers.get(bar);
+                if (header == null || header.menu == null || header.menu.get() != menu) return;
+                Button state = buttons.get(menu);
+                if (state != null) state.track((MotionEvent) p.args[0], -child.getX(), -child.getY());
+            }
+        }, MotionEvent.class);
+
+        Class<?> actions = loader.loadClass(UI + "Components.ProfileActionsView");
+        Field used = field(actions, "glassUsed");
+        hook(actions, "drawGlass", new UiHook() {
             @Override void before(MethodHookParam p) throws ReflectiveOperationException {
-                View view = (View) back.get(p.thisObject);
+                if (!((Canvas) p.args[0]).isHardwareAccelerated()) return;
+                View view = (View) p.thisObject;
+                ArrayList<Button> shapes = profileActions.computeIfAbsent(view, v -> new ArrayList<>());
+                int index = used.getInt(view);
+                while (shapes.size() <= index) shapes.add(new Button(view, false));
+                // drawGlass paints just one drawable, including on its first allocation.
+                scopeGlass(p, new ActiveGlass(shapes.get(index), null, false));
+            }
+            @Override void after(MethodHookParam p) { endScope(p); }
+        }, Canvas.class, RectF.class, float[].class, float.class);
+
+        // Keep ProfileMusicView's own bounce and layout for the balance and music chips.
+        installPanel(loader.loadClass(UI + "Components.ProfileMusicView"), "onDraw", "glass");
+        installPanel(loader.loadClass(UI + "Components.ChatActivityTopPanelLayout"), "dispatchDraw", "backgroundDrawable");
+        installPinnedAction(loader);
+    }
+
+    private static void installHeader(Class<?> type, Field[] views, String... drawableFields)
+            throws ReflectiveOperationException {
+        Field[] glass = fields(type, drawableFields);
+        hook(type, "dispatchDraw", new UiHook() {
+            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
                 Canvas canvas = (Canvas) p.args[0];
-                if (view == null || view.getVisibility() != View.VISIBLE || !canvas.isHardwareAccelerated()) return;
-                Button state = button(view);
-                state.watchPress(view);
-                Drawable background = (Drawable) backdrop.get(p.thisObject);
-                if (background != null) scopeGlass(p, state, background, true);
-                else {
-                    state.layout.set(view.getX(), view.getY(), view.getX() + view.getWidth(), view.getY() + view.getHeight());
+                if (!canvas.isHardwareAccelerated()) return;
+                View bar = (View) p.thisObject;
+                Header header = headers.computeIfAbsent(bar, Header::new);
+                for (int i = 0; i < glass.length; i++) {
+                    View child = (View) views[i].get(bar);
+                    if (child != null && child.getVisibility() != View.VISIBLE) child = null;
+                    Drawable backdrop = (Drawable) glass[i].get(bar);
+                    Button state = header.bind(i, bar, child, backdrop);
+                    if (child != null && i != 1) state.watchPress(child);
+                    if (i != 0 || child == null || backdrop != null || child.getAlpha() <= 0) continue;
+
+                    // Some bars have no native back drawable until the factory is attached.
+                    buttonRect(child, state.layout);
                     state.layout.inset(5 * state.dp, 5 * state.dp);
-                    if (state.layout.isEmpty()) return;
+                    if (state.layout.isEmpty()) continue;
                     int save = canvas.save();
                     try {
                         state.move(canvas, state.layout);
                         boolean dark = dark();
-                        drawLiquid(canvas, state, null, base(dark), dark, view.getAlpha(), state.layout);
+                        drawLiquid(canvas, state, null, base(dark), dark, child.getAlpha(), state.layout);
                     } finally {
                         canvas.restoreToCount(save);
                     }
                 }
+                p.setObjectExtra(HEADER, new Header[]{activeHeader});
+                activeHeader = header;
             }
             @Override void after(MethodHookParam p) {
-                endScope(p);
+                if (p.getObjectExtra(HEADER) instanceof Header[] prior) {
+                    activeHeader.end();
+                    activeHeader = prior[0];
+                }
             }
         }, Canvas.class);
-        hook(actionBar, "drawChild", new UiHook() {
-            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
+        hook(type, "drawChild", new UiHook() {
+            @Override void before(MethodHookParam p) {
+                Header header = activeHeader;
+                if (header == null || header.owner.get() != p.thisObject) return;
                 View child = (View) p.args[1];
-                if (child != back.get(p.thisObject)) return;
-                Button state = buttons.get(child);
+                Button state = header.forTarget(child);
+                if (state == null || state.progress() <= .001f) return;
                 Canvas canvas = (Canvas) p.args[0];
-                if (state == null || !canvas.isHardwareAccelerated()) return;
                 p.setObjectExtra(SAVE, canvas.save());
-                state.layout.set(child.getX(), child.getY(), child.getX() + child.getWidth(), child.getY() + child.getHeight());
-                state.move(canvas, state.layout);
+                if (state.bounds.isEmpty()) {
+                    buttonRect(child, state.layout);
+                    state.move(canvas, state.layout);
+                } else {
+                    state.move(canvas, state.bounds);
+                }
+            }
+            @Override void after(MethodHookParam p) { restore(p); }
+        }, Canvas.class, View.class, long.class);
+    }
+
+    private static void buttonRect(View view, RectF rect) {
+        rect.set(view.getX(), view.getY(), view.getX() + view.getWidth(), view.getY() + view.getHeight());
+    }
+
+    private static void installPanel(Class<?> type, String draw, String drawableField)
+            throws ReflectiveOperationException {
+        Field glass = field(type, drawableField);
+        hook(type, draw, new UiHook() {
+            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
+                if (!((Canvas) p.args[0]).isHardwareAccelerated()) return;
+                View view = (View) p.thisObject;
+                Drawable drawable = (Drawable) glass.get(view);
+                if (drawable != null) {
+                    scopeGlass(p, panels.computeIfAbsent(view, v -> new Button(v, false)), drawable, false);
+                }
+            }
+            @Override void after(MethodHookParam p) { endScope(p); }
+        }, Canvas.class);
+    }
+
+    private static void installPinnedAction(ClassLoader loader) throws ReflectiveOperationException {
+        Class<?> chat = loader.loadClass(UI + "ChatActivity");
+        Class<?> type = loader.loadClass(UI + "ChatActivity$PinnedMessageButton");
+        Field field = field(chat, "pinnedMessageButton");
+        pinnedBackground = field(type, "appliedBackground");
+        pinnedColor = field(type, "appliedColor");
+        hook(chat, "updatePinnedMessageView", new UiHook() {
+            @Override void after(MethodHookParam p) throws ReflectiveOperationException {
+                View[] controls = (View[]) field.get(p.thisObject);
+                for (View view : controls) {
+                    if (view == null || view.getBackground() != pinnedBackground.get(view)) continue;
+                    Button state = button(view);
+                    state.pinned = true;
+                    state.useFace(view);
+                }
+            }
+        }, boolean.class, int.class);
+        hook(type, "updateColors", new UiHook() {
+            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
+                View view = (View) p.thisObject;
+                Button state = buttons.get(view);
+                if (state != null && state.face != null && view.getBackground() == state.face) {
+                    view.setBackground((Drawable) pinnedBackground.get(view));
+                    p.setObjectExtra(SCOPE, state);
+                }
             }
             @Override void after(MethodHookParam p) {
-                restore(p);
+                if (p.getObjectExtra(SCOPE) instanceof Button state) state.useFace((View) p.thisObject);
             }
-        }, Canvas.class, View.class, long.class);
+        });
     }
 
     private static void installQr() throws ReflectiveOperationException {
@@ -528,7 +652,7 @@ final class ReleaseButtons {
         Button state = button(view);
         state.connect = true;
         state.disableStockAnimator(view);
-        freeClipping(view, 2);
+        state.freeClipping(view, 2);
         state.useFace(view);
     }
 
@@ -539,7 +663,7 @@ final class ReleaseButtons {
                 WeakReference<View> target = touchTargets.get(view);
                 View owner = target == null ? view : target.get();
                 Button state = owner == null ? null : buttons.get(owner);
-                if (state != null) {
+                if (state != null && !state.menuTarget) {
                     float x = target == null ? 0f : owner.getX();
                     float y = target == null ? 0f : owner.getY();
                     state.track((MotionEvent) p.args[0], x, y);
@@ -573,32 +697,18 @@ final class ReleaseButtons {
         int save = alpha >= .999f ? canvas.save() : canvas.saveLayerAlpha(
                 bounds.left - 6 * button.dp, bounds.top - 6 * button.dp,
                 bounds.right + 6 * button.dp, bounds.bottom + 6 * button.dp, Math.round(255 * alpha));
+        boolean sampled = source instanceof Sample;
         try {
             float press = button.progress();
+            if (sampled && button.sample.source == null) source = null;
             float tint = source == null ? (dark ? .89f : .88f) : (dark ? .22f : .26f);
             boolean screenCoordinates = button.canvasControl;
             button.surface.draw(canvas, bounds, button.dp, source, source == null ? 0 : base(dark),
-                    (Math.round(tint * 255) << 24) | (color & 0xFFFFFF), 2, 12 + 3 * press, 24 + 3 * press,
-                    .12f + .59f * press, press,
-                    button.glowX(bounds, screenCoordinates), button.glowY(bounds, screenCoordinates), dark);
+                    (Math.round(tint * 255) << 24) | (color & 0xFFFFFF), sampled ? button.sample.radii : null,
+                    press, button.glowX(bounds, screenCoordinates), button.glowY(bounds, screenCoordinates), dark);
         } finally {
+            if (sampled) button.sample.source = null;
             canvas.restoreToCount(save);
-        }
-    }
-
-    private static void freeClipping(View view, int levels) {
-        Button state = button(view);
-        if (view.getClipToOutline()) state.disableOutline(view);
-        View current = view;
-        for (int i = 0; i < levels && current.getParent() instanceof ViewGroup parent; i++) {
-            if (state.clipOwners.stream().noneMatch(ref -> ref.get() == parent)) {
-                Clip clip = clips.computeIfAbsent(parent, Clip::new);
-                clip.owners++;
-                state.clipOwners.add(new WeakReference<>(parent));
-                parent.setClipChildren(false);
-                parent.setClipToPadding(false);
-            }
-            current = parent;
         }
     }
 
@@ -623,9 +733,12 @@ final class ReleaseButtons {
     }
 
     private static void scopeGlass(XC_MethodHook.MethodHookParam p, Button state, Drawable drawable, boolean move) {
-        if (drawable == null) return;
+        if (drawable != null) scopeGlass(p, new ActiveGlass(state, drawable, move));
+    }
+
+    private static void scopeGlass(XC_MethodHook.MethodHookParam p, ActiveGlass scope) {
         p.setObjectExtra(SCOPE, new Object[]{activeGlass});
-        activeGlass = new ActiveGlass(state, drawable, move);
+        activeGlass = scope;
     }
 
     private static void endScope(XC_MethodHook.MethodHookParam p) {
@@ -690,6 +803,62 @@ final class ReleaseButtons {
     }
     private record ActiveGlass(Button button, Drawable drawable, boolean moveGlass) {}
 
+    private static final class Header {
+        final WeakReference<View> owner;
+        final ActiveGlass[] scopes = new ActiveGlass[3];
+        final Button[] stationary = new Button[3];
+        WeakReference<View> menu;
+
+        Header(View bar) {
+            owner = new WeakReference<>(bar);
+        }
+
+        Button bind(int index, View bar, View child, Drawable backdrop) {
+            if (index == 1 && (menu == null || menu.get() != child)) {
+                menu = child == null ? null : new WeakReference<>(child);
+            }
+            Button state;
+            if (child == null) {
+                if (backdrop == null) {
+                    scopes[index] = null;
+                    return null;
+                }
+                if (stationary[index] == null) stationary[index] = new Button(bar, false);
+                state = stationary[index];
+            } else {
+                state = button(child);
+                state.invalidateHost = owner;
+                state.menuTarget = index == 1;
+            }
+            scopes[index] = new ActiveGlass(state, backdrop, child != null);
+            return state;
+        }
+
+        void end() {
+            // Drawables belong to the native bar and may have it as their callback.
+            for (int i = 0; i < scopes.length; i++) scopes[i] = null;
+        }
+
+        View target(int index) {
+            ActiveGlass scope = scopes[index];
+            return scope == null || !scope.moveGlass ? null : scope.button.view.get();
+        }
+
+        Button forTarget(View view) {
+            for (int i = 0; i < scopes.length; i++) {
+                if (view == target(i)) return scopes[i].button;
+            }
+            return null;
+        }
+
+        ActiveGlass find(Object drawable) {
+            for (ActiveGlass scope : scopes) {
+                if (scope != null && drawable == scope.drawable) return scope;
+            }
+            return null;
+        }
+    }
+
     private static final class QrState {
         final Button[] items;
         int active = -1;
@@ -712,6 +881,7 @@ final class ReleaseButtons {
     private static final class Sample implements GlassSurface.Backdrop {
         final Rect padded = new Rect();
         Object source;
+        float[] radii;
         float x, y;
         int color;
         boolean resolve(Drawable drawable) throws ReflectiveOperationException {
@@ -723,6 +893,7 @@ final class ReleaseButtons {
             x = (float) offsetX.invoke(drawable);
             y = (float) offsetY.invoke(drawable);
             color = backgroundColor.getInt(drawable);
+            radii = (float[]) drawableRadii.get(drawableProps.get(drawable));
             paddedBounds.invoke(drawable, padded);
             return !padded.isEmpty();
         }
@@ -734,6 +905,9 @@ final class ReleaseButtons {
             try {
                 canvas.translate(-x, -y);
                 sourceDraw.invoke(source, canvas, l + x, t + y, r + x, b + y);
+            } catch (InvocationTargetException error) {
+                if (error.getCause() instanceof IllegalStateException unavailable) throw unavailable;
+                throw error;
             } finally {
                 canvas.restoreToCount(save);
             }
@@ -751,7 +925,9 @@ final class ReleaseButtons {
         final Sample sample = new Sample();
         final GlassSurface surface = new GlassSurface(.40f);
         final List<WeakReference<ViewGroup>> clipOwners = new ArrayList<>();
-        boolean tracking, nativePress, touchKnown, outlineDisabled, connect;
+        boolean tracking, nativePress, touchKnown, outlineDisabled, connect, pinned, menuTarget;
+        WeakReference<View> invalidateHost;
+        WeakReference<ViewGroup> clipParent;
         float startX, startY, x, y;
         Drawable capture;
         WeakReference<Object> engine;
@@ -768,13 +944,7 @@ final class ReleaseButtons {
             this.canvasControl = canvasControl;
             press.setMinimumVisibleChange(.003f);
             press.setSpring(new SpringForce(0));
-            press.addUpdateListener((animation, value, velocity) -> {
-                View current = view.get();
-                if (current != null) {
-                    current.invalidate();
-                    if (current.getParent() instanceof View parent) parent.invalidate();
-                }
-            });
+            press.addUpdateListener((animation, value, velocity) -> invalidateFrame());
         }
 
         void animate(boolean pressed) {
@@ -824,8 +994,13 @@ final class ReleaseButtons {
                 default:
                     return;
             }
-            View target = view.get();
-            if (target != null) target.invalidate();
+            invalidateFrame();
+        }
+
+        void invalidateFrame() {
+            View host = invalidateHost == null ? null : invalidateHost.get();
+            View target = host == null ? view.get() : host;
+            if (target != null) target.postInvalidateOnAnimation();
         }
 
         void move(Canvas canvas, RectF area) {
@@ -849,10 +1024,24 @@ final class ReleaseButtons {
             return absolute || target == null ? y : area.centerY() + y - target.getHeight() / 2f;
         }
 
-        void disableOutline(View view) {
-            if (outlineDisabled) return;
-            outlineDisabled = true;
-            view.setClipToOutline(false);
+        void freeClipping(View target, int levels) {
+            if (!(target.getParent() instanceof ViewGroup parent)) return;
+            if (clipParent != null && clipParent.get() == parent) return;
+            releaseClipping();
+            clipParent = new WeakReference<>(parent);
+            if (target.getClipToOutline()) {
+                outlineDisabled = true;
+                target.setClipToOutline(false);
+            }
+            View current = target;
+            for (int i = 0; i < levels && current.getParent() instanceof ViewGroup group; i++) {
+                Clip clip = clips.computeIfAbsent(group, Clip::new);
+                clip.owners++;
+                clipOwners.add(new WeakReference<>(group));
+                group.setClipChildren(false);
+                group.setClipToPadding(false);
+                current = group;
+            }
         }
 
         void disableStockAnimator(View owner) {
@@ -909,8 +1098,7 @@ final class ReleaseButtons {
             target.getRootView().postInvalidateOnAnimation();
         }
 
-        void restore(View target) {
-            press.cancel();
+        private void releaseClipping() {
             for (WeakReference<ViewGroup> owner : clipOwners) {
                 ViewGroup group = owner.get();
                 Clip clip = group == null ? null : clips.get(group);
@@ -921,6 +1109,12 @@ final class ReleaseButtons {
                 }
             }
             clipOwners.clear();
+            clipParent = null;
+        }
+
+        void restore(View target) {
+            press.cancel();
+            releaseClipping();
             if (outlineDisabled) target.setClipToOutline(true);
             if (attach != null) target.removeOnAttachStateChangeListener(attach);
             if (layoutListener != null) target.removeOnLayoutChangeListener(layoutListener);
@@ -953,12 +1147,12 @@ final class ReleaseButtons {
                         view.postInvalidateOnAnimation();
                     }
                     state.bounds.set(getBounds());
-                    if (state.connect) {
+                    if (state.connect || state.pinned) {
                         int save = canvas.save();
                         try {
-                            state.move(canvas, state.bounds);
+                            if (state.connect) state.move(canvas, state.bounds);
                             boolean dark = dark();
-                            int color = ctaBackground.getInt(view);
+                            int color = (state.pinned ? pinnedColor : ctaBackground).getInt(view);
                             drawLiquid(canvas, state, null, color == 0 ? 0xFF345784 : color,
                                     dark, alpha / 255f, state.bounds);
                         } finally {
