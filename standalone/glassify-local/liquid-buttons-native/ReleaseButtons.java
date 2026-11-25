@@ -17,6 +17,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
+import android.view.animation.PathInterpolator;
 
 import androidx.dynamicanimation.animation.FloatValueHolder;
 import androidx.dynamicanimation.animation.SpringAnimation;
@@ -39,6 +40,8 @@ final class ReleaseButtons {
     private static final String SAVE = "kyant.release.canvas";
     private static final String HEADER = "kyant.release.header";
     private static final String SCOPE = "kyant.release.backdrop";
+    private static final PathInterpolator HIGHLIGHT_IN = new PathInterpolator(0f, 0f, .58f, 1f);
+    private static final PathInterpolator HIGHLIGHT_OUT = new PathInterpolator(.42f, 0f, .58f, 1f);
     private static final int DAY = 0xFFF7F8FA;
     private static final int NIGHT = 0xFF202027;
     private static final ViewOutlineProvider ROUND_FAB_OUTLINE = new ViewOutlineProvider() {
@@ -492,7 +495,7 @@ final class ReleaseButtons {
                 if (header == null || header.owner.get() != p.thisObject) return;
                 View child = (View) p.args[1];
                 Button state = header.forTarget(child);
-                if (state == null || state.progress() <= .001f) return;
+                if (state == null || !state.isTransforming()) return;
                 Canvas canvas = (Canvas) p.args[0];
                 p.setObjectExtra(SAVE, canvas.save());
                 if (state.bounds.isEmpty()) {
@@ -744,7 +747,7 @@ final class ReleaseButtons {
                 bounds.right + 6 * button.dp, bounds.bottom + 6 * button.dp, Math.round(255 * alpha));
         boolean sampled = source instanceof Sample;
         try {
-            float press = button.progress();
+            float press = button.highlight;
             if (sampled && button.sample.source == null) source = null;
             float tint = source == null ? (dark ? .89f : .88f) : (dark ? .26f : .33f);
             if (source != null && sampled) tint += (button.sample.color >>> 24) / 255f * .10f;
@@ -958,7 +961,7 @@ final class ReleaseButtons {
                     || event.getActionMasked() == MotionEvent.ACTION_POINTER_DOWN) active = -1;
         }
         void cancel() {
-            for (Button item : items) item.press.cancel();
+            for (Button item : items) item.cancelAnimations();
         }
     }
 
@@ -1025,7 +1028,8 @@ final class ReleaseButtons {
         boolean tracking, touchReleased, lifted, touchKnown, outlineDisabled, connect, pinned, menuTarget;
         ButtonMotion.Transform shown = ButtonMotion.REST;
         ButtonMotion.Transform from = ButtonMotion.REST;
-        float fromGlow, shownGlow;
+        float highlight;
+        ValueAnimator highlightAnimation;
         WeakReference<View> invalidateHost;
         WeakReference<ViewGroup> clipParent;
         float startX, startY, x, y;
@@ -1048,47 +1052,64 @@ final class ReleaseButtons {
             dp = dp(target);
             this.canvasControl = canvasControl;
             surface = new GlassSurface(.40f, downsample);
-            press.setMinimumVisibleChange(.003f);
+            press.setMinimumVisibleChange(.001f);
             press.setSpring(new SpringForce(1f));
-            press.addUpdateListener((animation, value, velocity) -> {
-                // DynamicAnimation already runs in this frame's animation phase.
-                View targetView = invalidateTarget();
-                if (targetView != null) targetView.invalidate();
-            });
+            press.addUpdateListener((animation, value, velocity) -> invalidateAnimationFrame());
         }
 
         void animate(boolean pressed) {
             if (!ValueAnimator.areAnimatorsEnabled()) {
-                press.cancel();
+                cancelAnimations();
                 phase.setValue(1f);
                 lifted = false;
                 shown = from = ButtonMotion.REST;
-                shownGlow = fromGlow = 0;
+                highlight = 0;
                 return;
             }
             if (lifted == pressed) return;
             boolean wasResting = !lifted && !press.isRunning();
             from = wasResting ? ButtonMotion.REST : shown;
-            fromGlow = wasResting ? 0f : shownGlow;
             lifted = pressed;
+            animateHighlight(pressed);
             press.cancel();
-            if (!pressed && from == ButtonMotion.REST && fromGlow == 0) {
+            if (!pressed && from == ButtonMotion.REST) {
                 phase.setValue(1f);
                 return;
             }
             phase.setValue(0f);
+            ButtonMotion.Spring spring = pressed ? ButtonMotion.LIFT_ON : ButtonMotion.LIFT_OFF;
             press.getSpring()
-                    .setStiffness(pressed ? ButtonMotion.stiffness(1.36f, 568f) : 230f)
-                    .setDampingRatio(pressed ? ButtonMotion.damping(1.36f, 568f, 39.7f) : 1f);
+                    .setStiffness(spring.androidStiffness())
+                    .setDampingRatio(spring.androidDamping());
             press.setStartValue(0f).setStartVelocity(0f).start();
         }
 
-        private float fraction() { return Math.max(0f, Math.min(1f, phase.getValue())); }
-
-        float progress() {
-            shownGlow = ButtonMotion.lerp(fromGlow, lifted ? 1f : 0f, fraction());
-            return shownGlow;
+        private void animateHighlight(boolean pressed) {
+            stopHighlightAnimation();
+            float target = pressed ? 1f : 0f;
+            if (highlight == target) return;
+            highlightAnimation = ValueAnimator.ofFloat(highlight, target);
+            highlightAnimation.setDuration(pressed ? 120L : 220L);
+            highlightAnimation.setInterpolator(pressed ? HIGHLIGHT_IN : HIGHLIGHT_OUT);
+            highlightAnimation.addUpdateListener(animation -> {
+                highlight = (float) animation.getAnimatedValue();
+                invalidateAnimationFrame();
+            });
+            highlightAnimation.start();
         }
+
+        private void stopHighlightAnimation() {
+            if (highlightAnimation == null) return;
+            highlightAnimation.cancel();
+            highlightAnimation = null;
+        }
+
+        void cancelAnimations() {
+            press.cancel();
+            stopHighlightAnimation();
+        }
+
+        boolean isTransforming() { return lifted || press.isRunning(); }
 
         boolean settling() { return !lifted && press.isRunning(); }
 
@@ -1111,8 +1132,17 @@ final class ReleaseButtons {
                     break;
                 case MotionEvent.ACTION_MOVE:
                     if (!tracking) return;
-                    x = event.getX() - offsetX;
-                    y = event.getY() - offsetY;
+                    float nextX = event.getX() - offsetX;
+                    float nextY = event.getY() - offsetY;
+                    if (x == nextX && y == nextY) return;
+                    x = nextX;
+                    y = nextY;
+                    // Like TouchEffect.setStretchVector, follow the finger immediately.
+                    if (lifted) {
+                        cancelAnimations();
+                        phase.setValue(1f);
+                        highlight = 1f;
+                    }
                     break;
                 case MotionEvent.ACTION_UP:
                 case MotionEvent.ACTION_CANCEL:
@@ -1133,6 +1163,12 @@ final class ReleaseButtons {
             if (target != null) target.postInvalidateOnAnimation();
         }
 
+        private void invalidateAnimationFrame() {
+            // Animation callbacks already run in this frame, so draw without posting another frame.
+            View target = invalidateTarget();
+            if (target != null) target.invalidate();
+        }
+
         private View invalidateTarget() {
             View host = invalidateHost == null ? null : invalidateHost.get();
             return host == null ? view.get() : host;
@@ -1143,7 +1179,7 @@ final class ReleaseButtons {
                     ? ButtonMotion.transform(area.width(), area.height(), dp, 1f,
                             touchKnown ? x - startX : 0, touchKnown ? y - startY : 0)
                     : ButtonMotion.REST;
-            ButtonMotion.Transform transform = ButtonMotion.interpolate(from, target, fraction());
+            ButtonMotion.Transform transform = ButtonMotion.interpolate(from, target, phase.getValue());
             shown = transform;
             if (transform == ButtonMotion.REST) return;
             canvas.translate(transform.x(), transform.y());
@@ -1263,7 +1299,7 @@ final class ReleaseButtons {
         }
 
         void restore(View target) {
-            press.cancel();
+            cancelAnimations();
             releaseClipping();
             setRoundFabOutline(target, false);
             if (outlineDisabled) target.setClipToOutline(true);
