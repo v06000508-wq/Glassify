@@ -4,6 +4,7 @@ import android.animation.StateListAnimator;
 import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.ColorFilter;
 import android.graphics.Matrix;
 import android.graphics.Outline;
@@ -20,7 +21,9 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewOutlineProvider;
+import android.view.animation.AnimationUtils;
 import android.view.animation.PathInterpolator;
+import android.widget.TextView;
 
 import androidx.dynamicanimation.animation.FloatValueHolder;
 import androidx.dynamicanimation.animation.SpringAnimation;
@@ -59,6 +62,8 @@ final class ReleaseButtons {
     private static final WeakHashMap<Object, Button> profileActions = new WeakHashMap<>();
     private static final WeakHashMap<View, Button> profileGestures = new WeakHashMap<>();
     private static final WeakHashMap<Object, Boolean> profileBars = new WeakHashMap<>();
+    private static final WeakHashMap<Object, Boolean> profileMenus = new WeakHashMap<>();
+    private static final WeakHashMap<View, ProfileBackdrop> profileBackdrops = new WeakHashMap<>();
     private static final WeakHashMap<Drawable, Boolean> replacedRipples = new WeakHashMap<>();
     private static final WeakHashMap<View, Boolean> giftSheets = new WeakHashMap<>();
     private static final WeakHashMap<View, Button> panels = new WeakHashMap<>();
@@ -78,9 +83,10 @@ final class ReleaseButtons {
     private static Field blurEnabled, liquidEnabled;
     private static Field backgroundColor, drawableProps, drawableRadii, ctaBackground, pinnedBackground, pinnedColor;
     private static Field ctaFilled;
-    private static Field simpleActionBar;
+    private static Field simpleActionBar, profileTop, profileActionsView, profileOtherItem, profileButtonColor;
+    private static Method drawProfileTop;
     private static Method themeColor;
-    private static int dialogBackgroundKey;
+    private static int dialogBackgroundKey, giftAccentKey;
     private static Method rectangleInParent;
     private static Field[] qrRects, scannerRects;
     private static Field qrBlur, scannerBlur, scannerCamera, scannerGallery;
@@ -104,6 +110,7 @@ final class ReleaseButtons {
         panels.keySet().forEach(View::postInvalidateOnAnimation);
         profileActions.values().forEach(Button::invalidateFrame);
         qrStates.keySet().forEach(View::postInvalidateOnAnimation);
+        LiquidDialogs.invalidate();
     }
 
     static void load(Context context) throws ReflectiveOperationException {
@@ -118,6 +125,7 @@ final class ReleaseButtons {
             installQr();
             installConnect(loader);
             installTouch();
+            LiquidDialogs.install(loader);
             hook(drawableClass, "draw", new UiHook() {
                 @Override void before(MethodHookParam p) throws ReflectiveOperationException {
                     if (skipFabBackdrop == p.thisObject && ((Canvas) p.args[0]).isHardwareAccelerated()) {
@@ -138,7 +146,9 @@ final class ReleaseButtons {
                         return;
                     }
                     if (!button.sample.resolve(drawable)) return;
-                    if (button.sample.source != null) extendCapture(drawable, button);
+                    View owner = button.view.get();
+                    ProfileBackdrop profile = button.profileAction && owner != null ? profileBackdrops.get(owner) : null;
+                    if (profile == null && button.sample.source != null) extendCapture(drawable, button);
                     RectF bounds = button.bounds;
                     bounds.set(button.sample.padded);
                     if (bounds.isEmpty()) return;
@@ -146,11 +156,12 @@ final class ReleaseButtons {
                     try {
                         if (scope.moveGlass) button.move(canvas, bounds);
                         boolean dark = dark();
-                        int color = button.sample.color;
-                        drawLiquid(canvas, button, button.sample, color == 0 ? base(dark) : color,
+                        int color = profile != null ? profile.tint(base(dark)) : button.sample.color;
+                        drawLiquid(canvas, button, profile != null ? profile : button.sample, color == 0 ? base(dark) : color,
                                 dark, drawable.getAlpha() / 255f, bounds, button.sample.radii);
                         p.setResult(null);
                     } finally {
+                        button.sample.source = null;
                         canvas.restoreToCount(save);
                     }
                 }
@@ -171,6 +182,7 @@ final class ReleaseButtons {
     static void unload() {
         for (XC_MethodHook.Unhook hook : hooks) hook.unhook();
         hooks.clear();
+        LiquidDialogs.unload();
         buttons.forEach((view, button) -> {
             button.restore(view);
             view.invalidate();
@@ -196,6 +208,8 @@ final class ReleaseButtons {
         profileActions.clear();
         profileGestures.clear();
         profileBars.clear();
+        profileMenus.clear();
+        profileBackdrops.clear();
         replacedRipples.clear();
         giftSheets.clear();
         panels.keySet().forEach(View::invalidate);
@@ -546,13 +560,30 @@ final class ReleaseButtons {
         Class<?> overlay = loader.loadClass(UI + "ActionBar.SimpleActionBarMenuOverlay");
         profileClass = loader.loadClass(UI + "ProfileActivity");
         simpleActionBar = field(loader.loadClass(UI + "ActionBar.BaseFragment"), "simpleActionBar");
+        profileTop = field(profileClass, "topView");
+        profileActionsView = field(profileClass, "actionsView");
+        profileOtherItem = field(profileClass, "otherItem");
+        profileButtonColor = field(profileTop.getType(), "btnColor");
+        drawProfileTop = method(profileTop.getType(), "drawForCapture", Canvas.class);
         UiHook mark = new UiHook() {
             @Override void after(MethodHookParam p) throws ReflectiveOperationException {
                 markProfileBar(p.thisObject);
             }
         };
         hook(profileClass, "createHeaderBar", mark, Context.class);
+        hook(profileClass, "setupHeaderGlass", mark);
         hook(profileClass, "onResume", mark);
+        Field dimMenu = field(loader.loadClass(UI + "ActionBar.ActionBarMenuItem"), "dimMenu");
+        hook(dimMenu.getDeclaringClass(), "toggleSubMenu", new UiHook() {
+            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
+                if (!profileMenus.containsKey(p.thisObject) || !glassActive()) return;
+                p.setObjectExtra(SCOPE, dimMenu.getFloat(p.thisObject));
+                dimMenu.setFloat(p.thisObject, 0);
+            }
+            @Override void after(MethodHookParam p) throws ReflectiveOperationException {
+                if (p.getObjectExtra(SCOPE) instanceof Float original) dimMenu.setFloat(p.thisObject, original);
+            }
+        }, View.class, View.class);
         Field bar = field(overlay, "bar");
         Field glass = field(overlay, "glass");
         hook(overlay, "dispatchDraw", new UiHook() {
@@ -581,6 +612,11 @@ final class ReleaseButtons {
         if (!profileClass.isInstance(fragment)) return;
         Object bar = simpleActionBar.get(fragment);
         if (bar != null) profileBars.put(bar, true);
+        Object menu = profileOtherItem.get(fragment);
+        if (menu != null) profileMenus.put(menu, true);
+        View actions = (View) profileActionsView.get(fragment);
+        View top = (View) profileTop.get(fragment);
+        if (actions != null && top != null) profileBackdrops.put(actions, new ProfileBackdrop(actions, top));
     }
 
     private static void installProfileActions(ClassLoader loader) throws ReflectiveOperationException {
@@ -693,6 +729,7 @@ final class ReleaseButtons {
         return profileActions.computeIfAbsent(action, key -> {
             Button state = new Button(view, true);
             state.noShadow = true;
+            state.profileAction = true;
             return state;
         });
     }
@@ -882,6 +919,7 @@ final class ReleaseButtons {
         Class<?> theme = loader.loadClass(UI + "ActionBar.Theme");
         themeColor = theme.getMethod("getColor", int.class);
         dialogBackgroundKey = theme.getField("key_dialogBackground").getInt(null);
+        giftAccentKey = theme.getField("key_featuredStickers_addButton").getInt(null);
         Method containerView = bottomSheet.getMethod("getContainerView");
         Class<?>[] sheets = new Class<?>[]{
                 loader.loadClass(UI + "Stars.StarGiftSheet"),
@@ -968,6 +1006,35 @@ final class ReleaseButtons {
         return true;
     }
 
+    static int strength() { return strength; }
+
+    static void bindDialogAction(View view, boolean positive) {
+        if (view == null) return;
+        Button state = button(view);
+        state.dialogAction = true;
+        state.dialogPositive = positive;
+        state.noShadow = true;
+        state.useFace(view);
+    }
+
+    static void installDialogActionMotion(Class<?> text) throws ReflectiveOperationException {
+        hook(text, "onDraw", new UiHook() {
+            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
+                View view = (View) p.thisObject;
+                Canvas canvas = (Canvas) p.args[0];
+                Button state = buttons.get(view);
+                if (state == null || !state.dialogAction || !canvas.isHardwareAccelerated() || !glassActive()) return;
+                state.watchPress(view);
+                state.useFace(view);
+                if (!state.isTransforming()) return;
+                p.setObjectExtra(SAVE, canvas.save());
+                state.layout.set(0, 0, view.getWidth(), view.getHeight());
+                state.move(canvas, state.layout);
+            }
+            @Override void after(MethodHookParam p) { restore(p); }
+        }, Canvas.class);
+    }
+
     private static void bindConnect(View view) {
         if (view == null) return;
         Button state = button(view);
@@ -1024,7 +1091,8 @@ final class ReleaseButtons {
             if (sampled && button.sample.source == null) source = null;
             float tint = source == null ? (dark ? .89f : .88f) : (dark ? .26f : .33f);
             if (source != null && sampled) tint += (button.sample.color >>> 24) / 255f * .10f;
-            if (button.giftBackdrop != null && button.giftFilled) tint = .75f;
+            if (button.giftBackdrop != null) tint = button.giftFilled ? .86f : .32f;
+            if (button.dialogAction) tint = button.dialogPositive ? .22f : .13f;
             boolean screenCoordinates = button.canvasControl;
             button.surface.draw(canvas, bounds, button.dp, source, source == null ? 0 : base(dark),
                     (Math.round(tint * 255) << 24) | (color & 0xFFFFFF), corners,
@@ -1077,7 +1145,7 @@ final class ReleaseButtons {
     private static boolean dark() throws ReflectiveOperationException { return (boolean) darkTheme.invoke(null); }
     private static float dp(View view) { return view.getResources().getDisplayMetrics().density; }
 
-    private static boolean glassActive() throws ReflectiveOperationException {
+    static boolean glassActive() throws ReflectiveOperationException {
         Object settings = glassSettings.invoke(null);
         return blurEnabled.getBoolean(settings) && liquidEnabled.getBoolean(settings);
     }
@@ -1113,7 +1181,7 @@ final class ReleaseButtons {
         }
     }
 
-    private static Field field(Class<?> type, String name) throws ReflectiveOperationException {
+    static Field field(Class<?> type, String name) throws ReflectiveOperationException {
         Field f = type.getDeclaredField(name);
         f.setAccessible(true);
         return f;
@@ -1131,18 +1199,18 @@ final class ReleaseButtons {
         return m;
     }
 
-    private static void hook(Class<?> type, String name, UiHook hook, Class<?>... params)
+    static void hook(Class<?> type, String name, UiHook hook, Class<?>... params)
             throws ReflectiveOperationException {
         hooks.add(XposedBridge.hookMethod(method(type, name, params), hook));
     }
 
-    private static void report(Exception error) {
+    static void report(Exception error) {
         if (logged) return;
         logged = true;
         Log.w(TAG, "Could not draw a liquid control", error);
     }
 
-    private abstract static class UiHook extends XC_MethodHook {
+    abstract static class UiHook extends XC_MethodHook {
         @Override public final void beforeHookedMethod(MethodHookParam p) {
             try { before(p); } catch (ReflectiveOperationException | RuntimeException error) { report(error); }
         }
@@ -1288,6 +1356,53 @@ final class ReleaseButtons {
         }
     }
 
+    private static final class ProfileBackdrop implements GlassSurface.Backdrop {
+        final WeakReference<View> owner, header;
+        final int[] ownerLocation = new int[2];
+        final int[] headerLocation = new int[2];
+        final RenderNode backgroundNode = new RenderNode("Glassify profile backdrop");
+        long recordedFrame = -1;
+
+        ProfileBackdrop(View owner, View header) {
+            this.owner = new WeakReference<>(owner);
+            this.header = new WeakReference<>(header);
+        }
+
+        int tint(int fallback) throws IllegalAccessException {
+            View top = header.get();
+            if (top == null) return fallback;
+            int color = profileButtonColor.getInt(top);
+            return (color >>> 24) == 0 ? fallback : color;
+        }
+
+        @Override public void draw(Canvas canvas, float left, float top, float right, float bottom)
+                throws ReflectiveOperationException {
+            View actions = owner.get(), background = header.get();
+            if (actions == null || background == null || !background.isShown()
+                    || background.getWidth() <= 0 || background.getHeight() <= 0) return;
+            long frame = AnimationUtils.currentAnimationTimeMillis();
+            if (recordedFrame != frame || !backgroundNode.hasDisplayList()) {
+                backgroundNode.setPosition(0, 0, background.getWidth(), background.getHeight());
+                Canvas recording = backgroundNode.beginRecording();
+                try {
+                    drawProfileTop.invoke(background, recording);
+                } finally {
+                    backgroundNode.endRecording();
+                }
+                recordedFrame = frame;
+            }
+            actions.getLocationOnScreen(ownerLocation);
+            background.getLocationOnScreen(headerLocation);
+            int save = canvas.save();
+            try {
+                canvas.translate(headerLocation[0] - ownerLocation[0], headerLocation[1] - ownerLocation[1]);
+                canvas.drawRenderNode(backgroundNode);
+            } finally {
+                canvas.restoreToCount(save);
+            }
+        }
+    }
+
     private static final class GiftBackdrop implements GlassSurface.Backdrop {
         final WeakReference<View> owner;
         int fallback;
@@ -1330,7 +1445,7 @@ final class ReleaseButtons {
         final GlassSurface surface;
         final List<WeakReference<ViewGroup>> clipOwners = new ArrayList<>();
         boolean tracking, touchReleased, lifted, touchKnown, outlineDisabled, connect, pinned, menuTarget;
-        boolean noShadow, giftCounter, giftFilled;
+        boolean noShadow, profileAction, giftCounter, giftFilled, dialogAction, dialogPositive;
         GiftBackdrop giftBackdrop;
         ButtonMotion.Transform shown = ButtonMotion.REST;
         ButtonMotion.Transform from = ButtonMotion.REST;
@@ -1670,11 +1785,32 @@ final class ReleaseButtons {
                 if (state.giftFilled) {
                     color = stock instanceof ShapeDrawable shape ? shape.getPaint().getColor()
                             : ctaBackground.getInt(view);
+                    if (Color.luminance(color) < .055f) {
+                        color = (int) themeColor.invoke(null, giftAccentKey);
+                        if (Color.luminance(color) < .055f) {
+                            color = Color.rgb(
+                                    Math.round(ButtonMotion.lerp(Color.red(color), 255, .33f)),
+                                    Math.round(ButtonMotion.lerp(Color.green(color), 255, .33f)),
+                                    Math.round(ButtonMotion.lerp(Color.blue(color), 255, .33f)));
+                        }
+                    }
+                } else {
+                    color = Color.WHITE;
                 }
                 int save = canvas.save();
                 try {
                     state.move(canvas, state.bounds);
                     drawLiquid(canvas, state, state.giftBackdrop, color, dark, alpha / 255f, state.bounds, null);
+                } finally {
+                    canvas.restoreToCount(save);
+                }
+                return;
+            }
+            if (state.dialogAction && view instanceof TextView label) {
+                int save = canvas.save();
+                try {
+                    state.move(canvas, state.bounds);
+                    drawLiquid(canvas, state, null, label.getCurrentTextColor(), dark(), alpha / 255f, state.bounds, null);
                 } finally {
                     canvas.restoreToCount(save);
                 }
