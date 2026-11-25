@@ -81,12 +81,12 @@ final class GlassSurface {
 
     void draw(Canvas canvas, RectF bounds, float dp, Backdrop source, int base, int tint,
               float[] corners, Optics optics, float press, float touchX, float touchY, boolean dark,
-              boolean settling)
+              boolean settling, boolean hasShadow)
             throws ReflectiveOperationException {
         if (bounds.isEmpty()) return;
         updateShape(bounds, corners, dp);
         paint.setColor(base);
-        if (source != null) {
+        if (source != null && hasShadow) {
             paint.setShadowLayer(4 * dp, 0, dp, dark ? 0x43000000 : 0x24000000);
         }
         canvas.drawPath(shape, paint);

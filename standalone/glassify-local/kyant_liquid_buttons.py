@@ -10,9 +10,9 @@ GLASSIFY_EXTENSION = {
     "min_exteragram": "13.2.2"
 }
 
-_DEX_PATH = "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/local.kyant_liquid_buttons/1.0/payload/ios-touch.module.b64"
-_DEX_SHA256 = "1a91ffe6bf7633c75af7d995853e602940f82c6c7f1ba26110a7c99a260de172"
-_DEX_SIZE = 78208
+_DEX_PATH = "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/local.kyant_liquid_buttons/1.0/payload/profile-gifts.module.b64"
+_DEX_SHA256 = "6995e256991cb824f20f0941b05c2a7bed084a4d00cd09906bf5200ece3a6dee"
+_DEX_SIZE = 89552
 _DEX_CLASS = "glassify.kyant.LiquidButtonsEntry"
 _handle = None
 

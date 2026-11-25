@@ -5,12 +5,15 @@ import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.ColorFilter;
+import android.graphics.Matrix;
 import android.graphics.Outline;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.RenderNode;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.RippleDrawable;
+import android.graphics.drawable.ShapeDrawable;
 import android.os.Build;
 import android.util.Log;
 import android.view.MotionEvent;
@@ -53,7 +56,11 @@ final class ReleaseButtons {
     private static final WeakHashMap<View, Button> buttons = new WeakHashMap<>();
     private static final WeakHashMap<View, WeakReference<View>> touchTargets = new WeakHashMap<>();
     private static final WeakHashMap<View, Header> headers = new WeakHashMap<>();
-    private static final WeakHashMap<View, ArrayList<Button>> profileActions = new WeakHashMap<>();
+    private static final WeakHashMap<Object, Button> profileActions = new WeakHashMap<>();
+    private static final WeakHashMap<View, Button> profileGestures = new WeakHashMap<>();
+    private static final WeakHashMap<Object, Boolean> profileBars = new WeakHashMap<>();
+    private static final WeakHashMap<Drawable, Boolean> replacedRipples = new WeakHashMap<>();
+    private static final WeakHashMap<View, Boolean> giftSheets = new WeakHashMap<>();
     private static final WeakHashMap<View, Button> panels = new WeakHashMap<>();
     private static final WeakHashMap<Drawable, CaptureMargin> captureMargins = new WeakHashMap<>();
     private static final WeakHashMap<ViewGroup, Clip> clips = new WeakHashMap<>();
@@ -62,6 +69,7 @@ final class ReleaseButtons {
 
     private static Class<?> drawableClass, fabClass, dialogsClass, contactsClass, mainTabsClass, qrViewClass, scannerClass;
     private static Class<?> renderNodeSourceClass;
+    private static Class<?> profileClass;
     private static Field fabSub, fabTint, fabStockGlass, dialogsFactory, messageFab, storyFab, dialogsNoise;
     private static Field contactsFab, roundBackground, pageDownInner, factoryEngine;
     private static Method baseGlass, getFragmentView, createCapture, setOutset, engineInvalidate, unregister;
@@ -69,6 +77,10 @@ final class ReleaseButtons {
     private static Method glassSettings, getOutsetX, getOutsetY;
     private static Field blurEnabled, liquidEnabled;
     private static Field backgroundColor, drawableProps, drawableRadii, ctaBackground, pinnedBackground, pinnedColor;
+    private static Field ctaFilled;
+    private static Field simpleActionBar;
+    private static Method themeColor;
+    private static int dialogBackgroundKey;
     private static Method rectangleInParent;
     private static Field[] qrRects, scannerRects;
     private static Field qrBlur, scannerBlur, scannerCamera, scannerGallery;
@@ -77,6 +89,7 @@ final class ReleaseButtons {
     private static ActiveGlass activeGlass;
     private static Header activeHeader;
     private static Drawable skipFabBackdrop;
+    private static boolean profileTouch;
     private static boolean logged;
     private static int strength = 50;
     private static GlassSurface.Optics optics = GlassSurface.Optics.fromStrength(strength);
@@ -89,7 +102,7 @@ final class ReleaseButtons {
         buttons.values().forEach(Button::invalidateFrame);
         headers.keySet().forEach(View::postInvalidateOnAnimation);
         panels.keySet().forEach(View::postInvalidateOnAnimation);
-        profileActions.keySet().forEach(View::postInvalidateOnAnimation);
+        profileActions.values().forEach(Button::invalidateFrame);
         qrStates.keySet().forEach(View::postInvalidateOnAnimation);
     }
 
@@ -148,6 +161,7 @@ final class ReleaseButtons {
                 current = mainTabsClass.getMethod("getCurrentVisibleFragment").invoke(current);
             }
             bindFabs(current);
+            markProfileBar(current);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
             unload();
             throw error;
@@ -170,8 +184,20 @@ final class ReleaseButtons {
         touchTargets.clear();
         headers.keySet().forEach(View::invalidate);
         headers.clear();
-        profileActions.keySet().forEach(View::invalidate);
+        profileActions.values().forEach(button -> {
+            View view = button.view.get();
+            if (view != null) {
+                button.restore(view);
+                view.invalidate();
+            } else {
+                button.cancelAnimations();
+            }
+        });
         profileActions.clear();
+        profileGestures.clear();
+        profileBars.clear();
+        replacedRipples.clear();
+        giftSheets.clear();
         panels.keySet().forEach(View::invalidate);
         panels.clear();
         captureMargins.forEach(ReleaseButtons::restoreCaptureMargin);
@@ -184,6 +210,7 @@ final class ReleaseButtons {
         activeGlass = null;
         activeHeader = null;
         skipFabBackdrop = null;
+        profileTouch = false;
         logged = false;
     }
 
@@ -426,26 +453,12 @@ final class ReleaseButtons {
             }
         }, MotionEvent.class);
 
-        Class<?> actions = loader.loadClass(UI + "Components.ProfileActionsView");
-        Field used = field(actions, "glassUsed");
-        hook(actions, "drawGlass", new UiHook() {
-            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
-                if (!((Canvas) p.args[0]).isHardwareAccelerated()) return;
-                View view = (View) p.thisObject;
-                ArrayList<Button> shapes = profileActions.computeIfAbsent(view, v -> new ArrayList<>());
-                int index = used.getInt(view);
-                while (shapes.size() <= index) shapes.add(new Button(view, false));
-                // drawGlass paints just one drawable, including on its first allocation.
-                scopeGlass(p, new ActiveGlass(shapes.get(index), null, false));
-            }
-            @Override void after(MethodHookParam p) { endScope(p); }
-        }, Canvas.class, RectF.class, float[].class, float.class);
+        installProfileActions(loader);
 
         // Keep ProfileMusicView's own bounce and layout for the balance and music chips.
         installPanel(loader.loadClass(UI + "Components.ProfileMusicView"), "onDraw", "glass", 1);
         installPanel(loader.loadClass(UI + "Components.ChatActivityTopPanelLayout"), "dispatchDraw", "backgroundDrawable", 1);
-        // The host stops drawing its own menu capsule while this overlay grows from it.
-        installPanel(loader.loadClass(UI + "ActionBar.SimpleActionBarMenuOverlay"), "dispatchDraw", "glass", 2);
+        installMenuOverlay(loader);
         installPinnedAction(loader);
     }
 
@@ -527,6 +540,161 @@ final class ReleaseButtons {
             }
             @Override void after(MethodHookParam p) { endScope(p); }
         }, Canvas.class);
+    }
+
+    private static void installMenuOverlay(ClassLoader loader) throws ReflectiveOperationException {
+        Class<?> overlay = loader.loadClass(UI + "ActionBar.SimpleActionBarMenuOverlay");
+        profileClass = loader.loadClass(UI + "ProfileActivity");
+        simpleActionBar = field(loader.loadClass(UI + "ActionBar.BaseFragment"), "simpleActionBar");
+        UiHook mark = new UiHook() {
+            @Override void after(MethodHookParam p) throws ReflectiveOperationException {
+                markProfileBar(p.thisObject);
+            }
+        };
+        hook(profileClass, "createHeaderBar", mark, Context.class);
+        hook(profileClass, "onResume", mark);
+        Field bar = field(overlay, "bar");
+        Field glass = field(overlay, "glass");
+        hook(overlay, "dispatchDraw", new UiHook() {
+            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
+                if (!((Canvas) p.args[0]).isHardwareAccelerated()) return;
+                View view = (View) p.thisObject;
+                Drawable drawable = (Drawable) glass.get(view);
+                if (drawable == null) return;
+                Button state = panels.computeIfAbsent(view, v -> new Button(v, false, 2));
+                Object host = bar.get(view);
+                state.noShadow = profileBars.containsKey(host);
+                scopeGlass(p, state, drawable, false);
+            }
+            @Override void after(MethodHookParam p) { endScope(p); }
+        }, Canvas.class);
+        hook(overlay, "drawShadow", new UiHook() {
+            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
+                Button state = panels.get(p.thisObject);
+                if (state != null && state.noShadow && ((Canvas) p.args[0]).isHardwareAccelerated()
+                        && glassActive()) p.setResult(null);
+            }
+        }, Canvas.class, float.class);
+    }
+
+    private static void markProfileBar(Object fragment) throws ReflectiveOperationException {
+        if (!profileClass.isInstance(fragment)) return;
+        Object bar = simpleActionBar.get(fragment);
+        if (bar != null) profileBars.put(bar, true);
+    }
+
+    private static void installProfileActions(ClassLoader loader) throws ReflectiveOperationException {
+        Class<?> viewType = loader.loadClass(UI + "Components.ProfileActionsView");
+        Class<?> actionType = loader.loadClass(UI + "Components.ProfileActionsView$Action");
+        Field used = field(viewType, "glassUsed");
+        Field actions = field(viewType, "actions");
+        Field factory = field(viewType, "glassFactory");
+        Field hit = field(viewType, "hit");
+        Field deleted = field(actionType, "isDeleted");
+        Field ripple = field(actionType, "rippleDrawable");
+        Field materialRect = field(actionType, "containerInView");
+        Field layoutMatrix = field(actionType, "layoutMatrix");
+
+        hook(viewType, "onTouchEvent", new UiHook() {
+            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
+                View view = (View) p.thisObject;
+                MotionEvent event = (MotionEvent) p.args[0];
+                int type = event.getActionMasked();
+                Button state = profileGestures.get(view);
+                if (state != null && type != MotionEvent.ACTION_DOWN) {
+                    state.track(event, 0, 0);
+                    if (type == MotionEvent.ACTION_UP || type == MotionEvent.ACTION_CANCEL
+                            || type == MotionEvent.ACTION_POINTER_DOWN) profileGestures.remove(view);
+                }
+                p.setObjectExtra(SCOPE, profileTouch);
+                profileTouch = factory.get(view) != null && glassActive();
+            }
+
+            @Override void after(MethodHookParam p) throws ReflectiveOperationException {
+                if (!(p.getObjectExtra(SCOPE) instanceof Boolean previous)) return;
+                try {
+                    MotionEvent event = (MotionEvent) p.args[0];
+                    if (!profileTouch || event.getActionMasked() != MotionEvent.ACTION_DOWN
+                            || !Boolean.TRUE.equals(p.getResult())) return;
+                    View view = (View) p.thisObject;
+                    Object action = hit.get(view);
+                    if (action == null) return;
+                    Button state = profileButton(view, action);
+                    state.freeClipping(view, 2);
+                    profileGestures.put(view, state);
+                    state.track(event, 0, 0);
+                } finally {
+                    profileTouch = previous;
+                }
+            }
+        }, MotionEvent.class);
+        hook(actionType, "setPressed", new UiHook() {
+            @Override void before(MethodHookParam p) {
+                if (profileTouch) p.setResult(null);
+            }
+        }, boolean.class);
+        hook(viewType, "drawGlass", new UiHook() {
+            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
+                Canvas canvas = (Canvas) p.args[0];
+                if (!canvas.isHardwareAccelerated() || !glassActive()) return;
+                View view = (View) p.thisObject;
+                int index = used.getInt(view);
+                // Native drawGlass consumes a slot only for actions that have not been deleted.
+                for (Object action : (List<?>) actions.get(view)) {
+                    if (deleted.getBoolean(action)) continue;
+                    if (index-- != 0) continue;
+                    Button state = profileButton(view, action);
+                    state.layout.set((RectF) p.args[1]);
+                    replacedRipples.put((Drawable) ripple.get(action), true);
+                    if (state.isTransforming()) {
+                        p.setObjectExtra(SAVE, canvas.save());
+                        state.move(canvas, state.layout);
+                    }
+                    scopeGlass(p, new ActiveGlass(state, null, false));
+                    break;
+                }
+            }
+            @Override void after(MethodHookParam p) {
+                endScope(p);
+                restore(p);
+            }
+        }, Canvas.class, RectF.class, float[].class, float.class);
+        hook(actionType, "updateMaterial3Layout", new UiHook() {
+            @Override void after(MethodHookParam p) throws ReflectiveOperationException {
+                Button state = profileActions.get(p.thisObject);
+                if (state == null || !state.isTransforming() || !glassActive()) return;
+                RectF area = (RectF) materialRect.get(p.thisObject);
+                Matrix matrix = (Matrix) layoutMatrix.get(p.thisObject);
+                ButtonMotion.Transform pose = state.transform(area);
+                matrix.postScale(pose.scaleX(), pose.scaleY(), area.centerX(), area.centerY());
+                matrix.postTranslate(pose.x(), pose.y());
+            }
+        }, float.class);
+        hook(viewType, "drawAction", new UiHook() {
+            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
+                Button state = profileActions.get(p.args[1]);
+                Canvas canvas = (Canvas) p.args[0];
+                if (state == null || !state.isTransforming() || state.layout.isEmpty()
+                        || !canvas.isHardwareAccelerated() || !glassActive()) return;
+                p.setObjectExtra(SAVE, canvas.save());
+                state.move(canvas, state.layout);
+            }
+            @Override void after(MethodHookParam p) { restore(p); }
+        }, Canvas.class, actionType, float.class, float.class);
+        hook(RippleDrawable.class, "draw", new UiHook() {
+            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
+                if (replacedRipples.containsKey(p.thisObject) && ((Canvas) p.args[0]).isHardwareAccelerated()
+                        && glassActive()) p.setResult(null);
+            }
+        }, Canvas.class);
+    }
+
+    private static Button profileButton(View view, Object action) {
+        return profileActions.computeIfAbsent(action, key -> {
+            Button state = new Button(view, true);
+            state.noShadow = true;
+            return state;
+        });
     }
 
     private static void installPinnedAction(ClassLoader loader) throws ReflectiveOperationException {
@@ -674,17 +842,29 @@ final class ReleaseButtons {
         Class<?> cta = loader.loadClass(UI + "Stories.recorder.ButtonWithCounterView");
         Field connect = field(scanCell, "buttonTextView");
         ctaBackground = field(cta, "backgroundColor");
+        ctaFilled = field(cta, "filled");
+        Field ripple = cta.getField("rippleView");
+        installGiftSheets(loader, cta);
         hook(scanCell, "onAttachedToWindow", new UiHook() {
             @Override void after(MethodHookParam p) throws ReflectiveOperationException {
                 bindConnect((View) connect.get(p.thisObject));
             }
         });
         hook(cta, "onDraw", new UiHook() {
-            @Override void before(MethodHookParam p) {
+            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
                 View view = (View) p.thisObject;
-                Button state = buttons.get(view);
                 Canvas canvas = (Canvas) p.args[0];
-                if (state == null || !state.connect || !canvas.isHardwareAccelerated()) return;
+                if (!canvas.isHardwareAccelerated()) return;
+                Button state = buttons.get(view);
+                if (state == null && inGiftSheet(view)) state = bindGiftButton(view, true);
+                if (state == null) return;
+                if (state.giftBackdrop != null) {
+                    if (!prepareGiftButton(view, state)) return;
+                    Drawable background = ((View) ripple.get(view)).getBackground();
+                    if (background != null) replacedRipples.put(background, true);
+                } else if (!state.connect) {
+                    return;
+                }
                 state.watchPress(view);
                 if (view.getBackground() != state.face) state.useFace(view);
                 p.setObjectExtra(SAVE, canvas.save());
@@ -693,6 +873,99 @@ final class ReleaseButtons {
             }
             @Override void after(MethodHookParam p) { restore(p); }
         }, Canvas.class);
+    }
+
+    private static void installGiftSheets(ClassLoader loader, Class<?> cta) throws ReflectiveOperationException {
+        Class<?> bottomSheet = loader.loadClass(UI + "ActionBar.BottomSheet");
+        Class<?> infoAction = loader.loadClass(UI + "Stars.StarGiftSheet$TopView$Button");
+        Class<?> previewAction = loader.loadClass(UI + "Stars.StarGiftPreviewSheet$Button");
+        Class<?> theme = loader.loadClass(UI + "ActionBar.Theme");
+        themeColor = theme.getMethod("getColor", int.class);
+        dialogBackgroundKey = theme.getField("key_dialogBackground").getInt(null);
+        Method containerView = bottomSheet.getMethod("getContainerView");
+        Class<?>[] sheets = new Class<?>[]{
+                loader.loadClass(UI + "Stars.StarGiftSheet"),
+                loader.loadClass(UI + "Stars.StarGiftPreviewSheet"),
+                loader.loadClass(UI + "Stars.GiftOfferSheet"),
+                loader.loadClass(UI + "Stars.SellGiftEnterPriceSheet"),
+                loader.loadClass(UI + "Gifts.GiftSheet"),
+                loader.loadClass(UI + "Gifts.SendGiftSheet"),
+                loader.loadClass(UI + "Gifts.SelectGiftsBottomSheet"),
+                loader.loadClass(UI + "Gifts.AcquiredGiftsSheet"),
+                loader.loadClass(UI + "Gifts.ActiveAuctionsSheet"),
+                loader.loadClass(UI + "Gifts.AuctionJoinSheet"),
+                loader.loadClass(UI + "Gifts.AuctionBidSheet"),
+                loader.loadClass(UI + "Gifts.AuctionWearingSheet")
+        };
+        hook(bottomSheet, "show", new UiHook() {
+            @Override void after(MethodHookParam p) throws ReflectiveOperationException {
+                for (Class<?> sheet : sheets) {
+                    if (!sheet.isInstance(p.thisObject)) continue;
+                    View root = (View) containerView.invoke(p.thisObject);
+                    if (root != null) {
+                        giftSheets.put(root, true);
+                        bindGiftTree(root, cta, infoAction, previewAction);
+                    }
+                    break;
+                }
+            }
+        });
+        hook(ViewGroup.class, "dispatchDraw", new UiHook() {
+            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
+                View view = (View) p.thisObject;
+                if (!infoAction.isInstance(view) && !previewAction.isInstance(view)) return;
+                Canvas canvas = (Canvas) p.args[0];
+                if (!canvas.isHardwareAccelerated()) return;
+                Button state = buttons.get(view);
+                if (state == null && inGiftSheet(view)) state = bindGiftButton(view, false);
+                if (state == null || !prepareGiftButton(view, state)) return;
+                state.watchPress(view);
+                if (state.isTransforming()) {
+                    p.setObjectExtra(SAVE, canvas.save());
+                    state.layout.set(0, 0, view.getWidth(), view.getHeight());
+                    state.move(canvas, state.layout);
+                }
+            }
+            @Override void after(MethodHookParam p) { restore(p); }
+        }, Canvas.class);
+    }
+
+    private static boolean inGiftSheet(View view) {
+        if (giftSheets.isEmpty()) return false;
+        for (View ancestor = view; ancestor != null;
+                ancestor = ancestor.getParent() instanceof View parent ? parent : null) {
+            if (giftSheets.containsKey(ancestor)) return true;
+        }
+        return false;
+    }
+
+    private static void bindGiftTree(View view, Class<?> cta, Class<?> infoAction, Class<?> previewAction)
+            throws ReflectiveOperationException {
+        if (cta.isInstance(view) || infoAction.isInstance(view) || previewAction.isInstance(view)) {
+            prepareGiftButton(view, bindGiftButton(view, cta.isInstance(view)));
+        } else if (view instanceof ViewGroup group) {
+            for (int i = 0; i < group.getChildCount(); i++) {
+                bindGiftTree(group.getChildAt(i), cta, infoAction, previewAction);
+            }
+        }
+    }
+
+    private static Button bindGiftButton(View view, boolean counter) {
+        Button state = buttons.computeIfAbsent(view, v -> new Button(v, false, 2));
+        if (state.giftBackdrop == null) state.giftBackdrop = new GiftBackdrop(view);
+        state.giftCounter = counter;
+        return state;
+    }
+
+    private static boolean prepareGiftButton(View view, Button state) throws ReflectiveOperationException {
+        if (!glassActive()) {
+            state.restoreStockAnimator();
+            return false;
+        }
+        state.disableStockAnimator(view);
+        state.freeClipping(view, 2);
+        state.useFace(view);
+        return true;
     }
 
     private static void bindConnect(View view) {
@@ -751,11 +1024,12 @@ final class ReleaseButtons {
             if (sampled && button.sample.source == null) source = null;
             float tint = source == null ? (dark ? .89f : .88f) : (dark ? .26f : .33f);
             if (source != null && sampled) tint += (button.sample.color >>> 24) / 255f * .10f;
+            if (button.giftBackdrop != null && button.giftFilled) tint = .75f;
             boolean screenCoordinates = button.canvasControl;
             button.surface.draw(canvas, bounds, button.dp, source, source == null ? 0 : base(dark),
                     (Math.round(tint * 255) << 24) | (color & 0xFFFFFF), corners,
                     optics, press, button.glowX(bounds, screenCoordinates), button.glowY(bounds, screenCoordinates),
-                    dark, button.settling());
+                    dark, button.settling(), !button.noShadow);
         } finally {
             if (sampled) button.sample.source = null;
             canvas.restoreToCount(save);
@@ -1014,6 +1288,36 @@ final class ReleaseButtons {
         }
     }
 
+    private static final class GiftBackdrop implements GlassSurface.Backdrop {
+        final WeakReference<View> owner;
+        int fallback;
+
+        GiftBackdrop(View view) { owner = new WeakReference<>(view); }
+
+        @Override public void draw(Canvas canvas, float left, float top, float right, float bottom) {
+            // Only draw the surface behind the button. Recording the sheet itself would include the lens.
+            canvas.drawColor(fallback);
+            View layer = owner.get();
+            float x = 0, y = 0;
+            while (layer != null && layer.getParent() instanceof View parent) {
+                x += layer.getX() - parent.getScrollX();
+                y += layer.getY() - parent.getScrollY();
+                Drawable background = parent.getBackground();
+                if (background != null && !(background instanceof Face) && background.getAlpha() > 0) {
+                    int save = canvas.save();
+                    try {
+                        canvas.translate(-x, -y);
+                        background.draw(canvas);
+                    } finally {
+                        canvas.restoreToCount(save);
+                    }
+                    break;
+                }
+                layer = parent;
+            }
+        }
+    }
+
     private static final class Button {
         final WeakReference<View> view;
         final float dp;
@@ -1026,6 +1330,8 @@ final class ReleaseButtons {
         final GlassSurface surface;
         final List<WeakReference<ViewGroup>> clipOwners = new ArrayList<>();
         boolean tracking, touchReleased, lifted, touchKnown, outlineDisabled, connect, pinned, menuTarget;
+        boolean noShadow, giftCounter, giftFilled;
+        GiftBackdrop giftBackdrop;
         ButtonMotion.Transform shown = ButtonMotion.REST;
         ButtonMotion.Transform from = ButtonMotion.REST;
         float highlight;
@@ -1174,16 +1480,20 @@ final class ReleaseButtons {
             return host == null ? view.get() : host;
         }
 
-        void move(Canvas canvas, RectF area) {
+        ButtonMotion.Transform transform(RectF area) {
             ButtonMotion.Transform target = lifted
                     ? ButtonMotion.transform(area.width(), area.height(), dp, 1f,
                             touchKnown ? x - startX : 0, touchKnown ? y - startY : 0)
                     : ButtonMotion.REST;
-            ButtonMotion.Transform transform = ButtonMotion.interpolate(from, target, phase.getValue());
-            shown = transform;
-            if (transform == ButtonMotion.REST) return;
-            canvas.translate(transform.x(), transform.y());
-            canvas.scale(transform.scaleX(), transform.scaleY(), area.centerX(), area.centerY());
+            shown = ButtonMotion.interpolate(from, target, phase.getValue());
+            return shown;
+        }
+
+        void move(Canvas canvas, RectF area) {
+            ButtonMotion.Transform pose = transform(area);
+            if (pose == ButtonMotion.REST) return;
+            canvas.translate(pose.x(), pose.y());
+            canvas.scale(pose.scaleX(), pose.scaleY(), area.centerX(), area.centerY());
         }
 
         float glowX(RectF area, boolean absolute) {
@@ -1223,6 +1533,14 @@ final class ReleaseButtons {
             animatorOwner = new WeakReference<>(owner);
             originalAnimator = owner.getStateListAnimator();
             if (originalAnimator != null) owner.setStateListAnimator(null);
+        }
+
+        void restoreStockAnimator() {
+            if (animatorOwner == null) return;
+            View owner = animatorOwner.get();
+            if (owner != null && owner.getStateListAnimator() == null) owner.setStateListAnimator(originalAnimator);
+            animatorOwner = null;
+            originalAnimator = null;
         }
 
         void setRoundFabOutline(View target, boolean enabled) {
@@ -1306,10 +1624,7 @@ final class ReleaseButtons {
             if (attach != null) target.removeOnAttachStateChangeListener(attach);
             if (layoutListener != null) target.removeOnLayoutChangeListener(layoutListener);
             if (target.getBackground() == face && face != null) target.setBackground(face.stock);
-            if (animatorOwner != null) {
-                View owner = animatorOwner.get();
-                if (owner != null && owner.getStateListAnimator() == null) owner.setStateListAnimator(originalAnimator);
-            }
+            restoreStockAnimator();
             if (capture != null && engine != null && engine.get() != null) {
                 try { unregister.invoke(engine.get(), capture); }
                 catch (ReflectiveOperationException | RuntimeException error) { report(error); }
@@ -1346,6 +1661,25 @@ final class ReleaseButtons {
 
         private void drawGlass(Canvas canvas, View view) throws ReflectiveOperationException {
             state.bounds.set(getBounds());
+            if (state.giftBackdrop != null) {
+                state.giftFilled = state.giftCounter && ctaFilled.getBoolean(view);
+                state.giftBackdrop.fallback = state.giftCounter
+                        ? (int) themeColor.invoke(null, dialogBackgroundKey) : NIGHT;
+                boolean dark = !state.giftCounter || dark();
+                int color = base(dark);
+                if (state.giftFilled) {
+                    color = stock instanceof ShapeDrawable shape ? shape.getPaint().getColor()
+                            : ctaBackground.getInt(view);
+                }
+                int save = canvas.save();
+                try {
+                    state.move(canvas, state.bounds);
+                    drawLiquid(canvas, state, state.giftBackdrop, color, dark, alpha / 255f, state.bounds, null);
+                } finally {
+                    canvas.restoreToCount(save);
+                }
+                return;
+            }
             if (state.connect || state.pinned) {
                 int save = canvas.save();
                 try {
