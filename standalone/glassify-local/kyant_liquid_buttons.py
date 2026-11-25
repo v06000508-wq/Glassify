@@ -10,9 +10,9 @@ GLASSIFY_EXTENSION = {
     "min_exteragram": "13.2.2"
 }
 
-_DEX_PATH = "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/local.kyant_liquid_buttons/1.0/payload/soft-glass.module.b64"
-_DEX_SHA256 = "4461c3970bb77bd6f7f9da643a168fa8e77d078644105ec1ab2934a28afd4c8f"
-_DEX_SIZE = 72020
+_DEX_PATH = "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/local.kyant_liquid_buttons/1.0/payload/rounded-glass.module.b64"
+_DEX_SHA256 = "20a92d385b2c229bf409e91cc3e0d05d675f0cb52de3928580fcb7863af38ea0"
+_DEX_SIZE = 73472
 _DEX_CLASS = "glassify.kyant.LiquidButtonsEntry"
 _handle = None
 

@@ -16,24 +16,26 @@ import android.graphics.RuntimeShader;
 import android.graphics.Shader;
 
 final class GlassSurface {
-    // Includes the largest displacement and the Gaussian's sampling margin.
-    static final int CAPTURE_MARGIN_DP = 48;
+    // Refraction samples inwards. The capture margin covers the blur outside the silhouette.
+    static final int CAPTURE_MARGIN_DP = 24;
 
     record Optics(float blurDp, float bandDp, float refractionDp, float dispersion) {
         static Optics fromStrength(int strength) {
             float t = Math.max(1, Math.min(100, strength)) / 100f;
-            return new Optics(2.75f + 3.5f * t, 4f + 14f * t, 5f + 13f * t, .10f + .32f * t);
+            // Telegram iOS LegacyGlassView: 2 pt blur, a 12 pt band, and 20 pt mesh displacement.
+            return new Optics(1f + t + 4f * t * t * t, 4f + Math.min(8f, 16f * t),
+                    6f + 36f * t - 16f * t * t, .26f * Math.max(0f, t - .5f));
         }
 
         int padding(float dp) {
-            return (int) Math.ceil((refractionDp * (1 + dispersion) + blurDp * 3 + 2) * dp);
+            return (int) Math.ceil((blurDp * 3 + 2) * dp);
         }
     }
 
     private static final ColorMatrixColorFilter VIBRANCY;
     static {
         ColorMatrix matrix = new ColorMatrix();
-        matrix.setSaturation(1.10f);
+        matrix.setSaturation(1.22f);
         VIBRANCY = new ColorMatrixColorFilter(matrix);
     }
 
@@ -58,6 +60,7 @@ final class GlassSurface {
     private RuntimeShader rim;
     private RenderEffect inputEffect;
     private Optics appliedOptics;
+    private float maximumCorner;
     private boolean shaderFailed;
     private boolean rimFailed;
     private boolean effectDirty = true;
@@ -102,6 +105,7 @@ final class GlassSurface {
         }
         if (!changed) return;
         previousBounds.set(bounds);
+        maximumCorner = Math.max(Math.max(radii[0], radii[2]), Math.max(radii[4], radii[6]));
         shape.rewind();
         shape.addRoundRect(bounds, radii, Path.Direction.CW);
         float inset = .29f * dp;
@@ -127,7 +131,7 @@ final class GlassSurface {
         try {
             if (lens == null) {
                 lens = new RuntimeShader(Refraction.AGSL);
-                lens.setFloatUniform("depthEffect", .15f);
+                lens.setFloatUniform("depthEffect", .06f);
             }
             if (optics != appliedOptics) {
                 float radius = optics.blurDp * dp * scale;
@@ -138,8 +142,10 @@ final class GlassSurface {
             }
             // Touch transforms are on the outer canvas. Rebuild only for a new shape or strength.
             if (effectDirty) {
-                float band = Math.min(optics.bandDp * dp, .45f * Math.min(bounds.width(), bounds.height()));
+                float halfSide = Math.min(bounds.width(), bounds.height()) * .5f;
+                float band = Math.min(halfSide, Math.min(optics.bandDp * dp, Math.max(dp, maximumCorner)));
                 lens.setFloatUniform("refractionHeight", band * scale);
+                lens.setFloatUniform("outerEdgeBand", 2 * dp * scale);
                 lens.setFloatUniform("refractionAmount", -optics.refractionDp * dp * scale);
                 lens.setFloatUniform("chromaticAberration", optics.dispersion);
                 lens.setFloatUniform("size", bounds.width() * scale, bounds.height() * scale);

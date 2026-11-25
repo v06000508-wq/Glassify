@@ -5,6 +5,7 @@ import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.ColorFilter;
+import android.graphics.Outline;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.RectF;
@@ -15,6 +16,7 @@ import android.util.Log;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewOutlineProvider;
 
 import androidx.dynamicanimation.animation.FloatValueHolder;
 import androidx.dynamicanimation.animation.SpringAnimation;
@@ -39,6 +41,11 @@ final class ReleaseButtons {
     private static final String SCOPE = "kyant.release.backdrop";
     private static final int DAY = 0xFFF7F8FA;
     private static final int NIGHT = 0xFF202027;
+    private static final ViewOutlineProvider ROUND_FAB_OUTLINE = new ViewOutlineProvider() {
+        @Override public void getOutline(View view, Outline outline) {
+            outline.setOval(0, 0, view.getWidth(), view.getHeight());
+        }
+    };
     private static final ArrayList<XC_MethodHook.Unhook> hooks = new ArrayList<>();
     private static final WeakHashMap<View, Button> buttons = new WeakHashMap<>();
     private static final WeakHashMap<View, WeakReference<View>> touchTargets = new WeakHashMap<>();
@@ -124,7 +131,7 @@ final class ReleaseButtons {
                         boolean dark = dark();
                         int color = button.sample.color;
                         drawLiquid(canvas, button, button.sample, color == 0 ? base(dark) : color,
-                                dark, drawable.getAlpha() / 255f, bounds);
+                                dark, drawable.getAlpha() / 255f, bounds, button.sample.radii);
                         p.setResult(null);
                     } finally {
                         canvas.restoreToCount(save);
@@ -279,7 +286,9 @@ final class ReleaseButtons {
                 if (state == null || !canvas.isHardwareAccelerated()) return;
                 state.freeClipping(view, 3);
                 state.watchPress(view);
-                if (state.capture != null && !state.capture.getBounds().isEmpty() && glassActive()) {
+                boolean customFace = state.face != null && view.getBackground() == state.face && glassActive();
+                if (!fabSub.getBoolean(view)) state.setRoundFabOutline(view, customFace);
+                if (customFace) {
                     p.setObjectExtra(SCOPE, new Object[]{skipFabBackdrop});
                     skipFabBackdrop = (Drawable) fabStockGlass.get(view);
                 }
@@ -460,7 +469,7 @@ final class ReleaseButtons {
                     try {
                         state.move(canvas, state.layout);
                         boolean dark = dark();
-                        drawLiquid(canvas, state, null, base(dark), dark, child.getAlpha(), state.layout);
+                        drawLiquid(canvas, state, null, base(dark), dark, child.getAlpha(), state.layout, null);
                     } finally {
                         canvas.restoreToCount(save);
                     }
@@ -718,14 +727,14 @@ final class ReleaseButtons {
         int save = canvas.save();
         try {
             button.move(canvas, bounds);
-            drawLiquid(canvas, button, source, base(dark), dark, alpha, bounds);
+            drawLiquid(canvas, button, source, base(dark), dark, alpha, bounds, null);
         } finally {
             canvas.restoreToCount(save);
         }
     }
 
     private static void drawLiquid(Canvas canvas, Button button, GlassSurface.Backdrop source,
-                                   int color, boolean dark, float alpha, RectF bounds)
+                                   int color, boolean dark, float alpha, RectF bounds, float[] corners)
             throws ReflectiveOperationException {
         if (alpha <= 0 || bounds.isEmpty()) return;
         int save = alpha >= .999f ? canvas.save() : canvas.saveLayerAlpha(
@@ -735,11 +744,11 @@ final class ReleaseButtons {
         try {
             float press = button.progress();
             if (sampled && button.sample.source == null) source = null;
-            float tint = source == null ? (dark ? .89f : .88f) : (dark ? .22f : .26f);
-            if (source != null && sampled) tint += (button.sample.color >>> 24) / 255f * .16f;
+            float tint = source == null ? (dark ? .89f : .88f) : (dark ? .26f : .33f);
+            if (source != null && sampled) tint += (button.sample.color >>> 24) / 255f * .10f;
             boolean screenCoordinates = button.canvasControl;
             button.surface.draw(canvas, bounds, button.dp, source, source == null ? 0 : base(dark),
-                    (Math.round(tint * 255) << 24) | (color & 0xFFFFFF), sampled ? button.sample.radii : null,
+                    (Math.round(tint * 255) << 24) | (color & 0xFFFFFF), corners,
                     optics, press, button.glowX(bounds, screenCoordinates), button.glowY(bounds, screenCoordinates), dark);
         } finally {
             if (sampled) button.sample.source = null;
@@ -1005,6 +1014,7 @@ final class ReleaseButtons {
         WeakReference<Object> engine;
         WeakReference<View> animatorOwner;
         StateListAnimator originalAnimator;
+        ViewOutlineProvider originalFabOutline;
         Face face;
         View.OnAttachStateChangeListener attach;
         View.OnLayoutChangeListener layoutListener;
@@ -1128,6 +1138,17 @@ final class ReleaseButtons {
             if (originalAnimator != null) owner.setStateListAnimator(null);
         }
 
+        void setRoundFabOutline(View target, boolean enabled) {
+            ViewOutlineProvider outline = target.getOutlineProvider();
+            if (enabled && outline != ROUND_FAB_OUTLINE) {
+                originalFabOutline = outline;
+                target.setOutlineProvider(ROUND_FAB_OUTLINE);
+            } else if (!enabled && outline == ROUND_FAB_OUTLINE) {
+                target.setOutlineProvider(originalFabOutline);
+                originalFabOutline = null;
+            }
+        }
+
         void useFace(View view) {
             if (view.getBackground() == face && face != null) return;
             face = new Face(this, view.getBackground());
@@ -1193,6 +1214,7 @@ final class ReleaseButtons {
         void restore(View target) {
             press.cancel();
             releaseClipping();
+            setRoundFabOutline(target, false);
             if (outlineDisabled) target.setClipToOutline(true);
             if (attach != null) target.removeOnAttachStateChangeListener(attach);
             if (layoutListener != null) target.removeOnLayoutChangeListener(layoutListener);
@@ -1244,7 +1266,7 @@ final class ReleaseButtons {
                     boolean dark = dark();
                     int color = (state.pinned ? pinnedColor : ctaBackground).getInt(view);
                     drawLiquid(canvas, state, null, color == 0 ? 0xFF345784 : color,
-                            dark, alpha / 255f, state.bounds);
+                            dark, alpha / 255f, state.bounds, null);
                 } finally {
                     canvas.restoreToCount(save);
                 }
@@ -1252,14 +1274,12 @@ final class ReleaseButtons {
             }
             boolean subButton = fabSub.getBoolean(view);
             if (subButton) state.bounds.inset(4 * state.dp, 4 * state.dp);
-            if (state.sample.resolve(state.capture)) {
-                boolean dark = dark();
-                int color = subButton ? base(dark) : fabTint.getInt(view);
-                if (color == 0) color = base(dark);
-                drawLiquid(canvas, state, state.sample, color, dark, alpha / 255f, state.bounds);
-            } else {
-                drawStock(canvas);
-            }
+            boolean dark = dark();
+            int color = subButton ? base(dark) : fabTint.getInt(view);
+            GlassSurface.Backdrop backdrop = state.sample.resolve(state.capture) ? state.sample : null;
+            // Capture bounds describe a texture. The floating control owns its circular silhouette.
+            drawLiquid(canvas, state, backdrop, color == 0 ? base(dark) : color, dark,
+                    alpha / 255f, state.bounds, null);
         }
 
         private void drawStock(Canvas canvas) {

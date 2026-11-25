@@ -25,6 +25,7 @@ final class Refraction {
         uniform float2 offset;
         uniform float4 cornerRadii;
         uniform float refractionHeight;
+        uniform float outerEdgeBand;
         uniform float refractionAmount;
         uniform float depthEffect;
         uniform float chromaticAberration;
@@ -56,8 +57,19 @@ final class Refraction {
             }
         }
 
-        float circleMap(float x) {
-            return 1.0 - sqrt(1.0 - x * x);
+        // Cubic displacement curve from Telegram iOS LegacyGlassView, evaluated only on the rim.
+        float displacement(float x) {
+            float t = x;
+            for (int i = 0; i < 4; i++) {
+                float atT = ((1.7063492 * t - 3.1547619) * t + 2.4484127) * t;
+                float slope = (5.1190476 * t - 6.3095238) * t + 2.4484127;
+                t = clamp(t - (atT - x) / slope, 0.0, 1.0);
+            }
+            return ((-1.0039683 * t + 1.3888889) * t + 0.6150794) * t;
+        }
+
+        half4 sampleInside(float2 coord) {
+            return content.eval(clamp(coord, -offset, size - offset));
         }
 
         half4 main(float2 coord) {
@@ -66,51 +78,50 @@ final class Refraction {
             float radius = radiusAt(centeredCoord, cornerRadii);
 
             float sd = sdRoundedRect(centeredCoord, halfSize, radius);
-            if (-sd >= refractionHeight) {
+            if (sd > 0.0 || -sd >= refractionHeight) {
                 return content.eval(coord);
             }
-            sd = min(sd, 0.0);
 
-            float d = circleMap(1.0 - -sd / refractionHeight) * refractionAmount;
-            float gradRadius = min(radius * 1.5, min(halfSize.x, halfSize.y));
-            float2 n = gradSdRoundedRect(centeredCoord, halfSize, gradRadius) + depthEffect * centeredCoord / max(length(centeredCoord), 0.0001);
+            float boost = 1.0 + 0.5 * smoothstep(0.0, outerEdgeBand, outerEdgeBand + sd);
+            float d = displacement(1.0 + sd / refractionHeight) * boost * refractionAmount;
+            float2 n = gradSdRoundedRect(centeredCoord, halfSize, radius) + depthEffect * centeredCoord / max(length(centeredCoord), 0.0001);
             float2 grad = n / max(length(n), 0.0001);
 
             float2 refractedCoord = coord + d * grad;
-            if (chromaticAberration <= 0.0) return content.eval(refractedCoord);
+            if (chromaticAberration <= 0.0) return sampleInside(refractedCoord);
             float dispersionIntensity = chromaticAberration * ((centeredCoord.x * centeredCoord.y) / (halfSize.x * halfSize.y));
             float2 dispersedCoord = d * grad * dispersionIntensity;
 
             half4 color = half4(0.0);
 
-            half4 red = content.eval(refractedCoord + dispersedCoord);
+            half4 red = sampleInside(refractedCoord + dispersedCoord);
             color.r += red.r / 3.5;
             color.a += red.a / 7.0;
 
-            half4 orange = content.eval(refractedCoord + dispersedCoord * (2.0 / 3.0));
+            half4 orange = sampleInside(refractedCoord + dispersedCoord * (2.0 / 3.0));
             color.r += orange.r / 3.5;
             color.g += orange.g / 7.0;
             color.a += orange.a / 7.0;
 
-            half4 yellow = content.eval(refractedCoord + dispersedCoord * (1.0 / 3.0));
+            half4 yellow = sampleInside(refractedCoord + dispersedCoord * (1.0 / 3.0));
             color.r += yellow.r / 3.5;
             color.g += yellow.g / 3.5;
             color.a += yellow.a / 7.0;
 
-            half4 green = content.eval(refractedCoord);
+            half4 green = sampleInside(refractedCoord);
             color.g += green.g / 3.5;
             color.a += green.a / 7.0;
 
-            half4 cyan = content.eval(refractedCoord - dispersedCoord * (1.0 / 3.0));
+            half4 cyan = sampleInside(refractedCoord - dispersedCoord * (1.0 / 3.0));
             color.g += cyan.g / 3.5;
             color.b += cyan.b / 3.0;
             color.a += cyan.a / 7.0;
 
-            half4 blue = content.eval(refractedCoord - dispersedCoord * (2.0 / 3.0));
+            half4 blue = sampleInside(refractedCoord - dispersedCoord * (2.0 / 3.0));
             color.b += blue.b / 3.0;
             color.a += blue.a / 7.0;
 
-            half4 purple = content.eval(refractedCoord - dispersedCoord);
+            half4 purple = sampleInside(refractedCoord - dispersedCoord);
             color.r += purple.r / 7.0;
             color.b += purple.b / 3.0;
             color.a += purple.a / 7.0;
