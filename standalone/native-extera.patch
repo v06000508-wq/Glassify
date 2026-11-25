@@ -9,7 +9,19 @@
  import android.graphics.Paint;
  import android.graphics.Path;
  import android.graphics.RadialGradient;
-@@ -33,13 +33,33 @@
+@@ -15,6 +15,11 @@
+ import android.graphics.Shader;
+
+ final class GlassSurface {
++    private final float edgeStrength;
++
++    GlassSurface(float edgeStrength) {
++        this.edgeStrength = edgeStrength;
++    }
+     interface Backdrop {
+         void draw(Canvas canvas, float l, float t, float r, float b)
+                 throws ReflectiveOperationException;
+@@ -33,13 +38,34 @@
      private RuntimeShader lens;
      private float blur = -1;
      private boolean shaderFailed;
@@ -23,7 +35,7 @@
 +    private int recordedTint;
 +
 +    // Draw the panel's already-rendered lens and tint into the indicator's second pass.
-+    void drawRecordedBackdrop(Canvas canvas, float l, float t, float r, float b) {
++    void drawRecordedBackdrop(Canvas canvas, float dp, boolean dark) {
 +        if (!recorded) return;
 +        float radius = Math.min(recordedBounds.width(), recordedBounds.height()) / 2f;
 +        int save = canvas.save();
@@ -34,6 +46,7 @@
 +            canvas.drawRenderNode(node);
 +            paint.setColor(recordedTint);
 +            canvas.drawRoundRect(recordedBounds, radius, radius, paint);
++            drawEdge(canvas, recordedBounds, radius, dp, 0, dark);
 +        } finally {
 +            canvas.restoreToCount(save);
 +        }
@@ -46,7 +59,7 @@
          if (bounds.isEmpty()) return;
          float radius = Math.min(bounds.width(), bounds.height()) / 2f;
          paint.setColor(base);
-@@ -90,6 +110,9 @@
+@@ -90,6 +116,9 @@
                      clip.addRoundRect(bounds, radius, radius, Path.Direction.CW);
                      canvas.clipPath(clip);
                      canvas.drawRenderNode(node);
@@ -56,9 +69,47 @@
                  } finally {
                      canvas.restoreToCount(save);
                  }
-@@ -111,34 +134,45 @@
+@@ -110,35 +139,57 @@
+     void finish(Canvas canvas, RectF bounds, float radius, float dp, float press,
                  float touchX, float touchY, boolean dark) {
          if (bounds.isEmpty()) return;
++        drawPressGlow(canvas, bounds, radius, press, touchX, touchY);
++        drawEdge(canvas, bounds, radius, dp, press, dark);
++    }
++
++    private void drawEdge(Canvas canvas, RectF bounds, float radius, float dp, float press, boolean dark) {
++        if (radius <= 0 || !canvas.isHardwareAccelerated() || rimFailed) return;
++        try {
++            if (rim == null) {
++                rim = new RuntimeShader(Refraction.HIGHLIGHT);
++                rim.setFloatUniform("angle", (float) (-Math.PI / 3));
++                rim.setFloatUniform("falloff", 3.5f);
++            }
++            rim.setFloatUniform("origin", bounds.left, bounds.top);
++            rim.setFloatUniform("size", bounds.width(), bounds.height());
++            rim.setFloatUniform("cornerRadii", radius, radius, radius, radius);
++            float strength = Math.min(1f, edgeStrength * (1f + .24f * press));
++            int alpha = Math.round((dark ? 164 : 197) * strength);
++            rim.setColorUniform("color", (alpha << 24) | 0xFFFFFF);
++            paint.setColor(Color.WHITE);
++            paint.setShader(rim);
++            paint.setStrokeWidth(.55f * dp);
++            paint.setStyle(Paint.Style.STROKE);
++            float inset = .29f * dp;
++            float innerRadius = Math.max(0f, radius - inset);
++            canvas.drawRoundRect(bounds.left + inset, bounds.top + inset,
++                    bounds.right - inset, bounds.bottom - inset, innerRadius, innerRadius, paint);
++        } catch (IllegalArgumentException | IllegalStateException error) {
++            rimFailed = true;
++            android.util.Log.w("GlassifyKyant", "Highlight shader unavailable", error);
++        } finally {
++            paint.setStyle(Paint.Style.FILL);
++            paint.setShader(null);
++        }
++    }
++
++    void drawPressGlow(Canvas canvas, RectF bounds, float radius, float press, float touchX, float touchY) {
++        if (bounds.isEmpty()) return;
          if (press > .01f) {
 -            int alpha = (int) (Math.min(1f, press) * (dark ? 99 : 72));
 +            float progress = Math.min(1f, press);
@@ -77,7 +128,7 @@
              paint.setShader(null);
 +            paint.setBlendMode(null);
          }
-
+-
 -        if (rim == null || previousTop != bounds.top || previousBottom != bounds.bottom
 -                || previousDark != dark) {
 -            previousTop = bounds.top;
@@ -87,31 +138,7 @@
 -                    dark ? new int[]{0xA9FFFFFF, 0x1AFFFFFF, 0x62D0E2FF}
 -                         : new int[]{0xE7FFFFFF, 0x2AFFFFFF, 0x4E516E9D},
 -                    new float[]{0, .52f, 1}, Shader.TileMode.CLAMP);
-+        if (radius <= 0 || !canvas.isHardwareAccelerated() || rimFailed) return;
-+        try {
-+            if (rim == null) {
-+                rim = new RuntimeShader(Refraction.HIGHLIGHT);
-+                rim.setFloatUniform("angle", (float) (-Math.PI / 3));
-+                rim.setFloatUniform("falloff", 3.5f);
-+            }
-+            rim.setFloatUniform("origin", bounds.left, bounds.top);
-+            rim.setFloatUniform("size", bounds.width(), bounds.height());
-+            rim.setFloatUniform("cornerRadii", radius, radius, radius, radius);
-+            rim.setColorUniform("color", dark ? 0xB4FFFFFF : 0xE0FFFFFF);
-+            paint.setColor(Color.WHITE);
-+            paint.setShader(rim);
-+            paint.setStrokeWidth(dp);
-+            paint.setStyle(Paint.Style.STROKE);
-+            float inset = dp * .5f;
-+            canvas.drawRoundRect(bounds.left + inset, bounds.top + inset,
-+                    bounds.right - inset, bounds.bottom - inset, radius - inset, radius - inset, paint);
-+        } catch (IllegalArgumentException | IllegalStateException error) {
-+            rimFailed = true;
-+            android.util.Log.w("GlassifyKyant", "Highlight shader unavailable", error);
-+        } finally {
-+            paint.setStyle(Paint.Style.FILL);
-+            paint.setShader(null);
-         }
+-        }
 -        paint.setColor(Color.WHITE);
 -        paint.setShader(rim);
 -        paint.setStrokeWidth(.8f * dp);
@@ -126,16 +153,22 @@
  }
 --- a/extensions/kyant_liquid_glass/1.0/native/LiquidGlass.java
 +++ b/extensions/kyant_liquid_glass/1.0/native/LiquidGlass.java
-@@ -4,6 +4,8 @@
+@@ -2,8 +2,14 @@
+
+ import android.animation.ValueAnimator;
  import android.content.Context;
++import android.graphics.BlendMode;
++import android.graphics.BlendModeColorFilter;
  import android.graphics.Canvas;
++import android.graphics.RenderEffect;
++import android.graphics.RenderNode;
  import android.graphics.LinearGradient;
 +import android.graphics.ColorFilter;
 +import android.graphics.PixelFormat;
  import android.graphics.Outline;
  import android.graphics.Paint;
  import android.graphics.Rect;
-@@ -25,6 +27,7 @@
+@@ -25,6 +31,7 @@
  import java.lang.reflect.InvocationTargetException;
  import java.lang.reflect.Method;
  import java.util.ArrayList;
@@ -143,9 +176,11 @@
  import java.util.WeakHashMap;
 
  import de.robv.android.xposed.XC_MethodHook;
-@@ -38,6 +41,15 @@
+@@ -37,7 +44,17 @@
+     private static final WeakHashMap<Drawable, WeakReference<View>> bars = new WeakHashMap<>();
      private static final WeakHashMap<View, Button> buttons = new WeakHashMap<>();
      private static final String DRAW_FRAME = "glassify.kyant.drawFrame";
++    private static final String TAB_CONTENT = "glassify.kyant.tabContent";
      private static final String STOCK_SELECTOR = "glassify.kyant.stockSelector";
 +    private static final String STOCK_PAINT = "glassify.kyant.stockPaint";
 +    private static final Shader CLEAR_SHADER = new LinearGradient(0, 0, 0, 1, 0, 0, Shader.TileMode.CLAMP);
@@ -159,7 +194,7 @@
      private static final String STOCK_DIVIDER = "glassify.kyant.stockDivider";
      private static final int DEFAULT_LIGHT = 0xFFF7F8FB;
      private static final int DEFAULT_DARK = 0xFF1B1C21;
-@@ -45,7 +57,14 @@
+@@ -45,7 +62,14 @@
      private static Class<?> mainActivity, tabLayout, glassTab, blurDrawable, roundButton, fab, send;
      private static Field mainTabs, swipe, dragging, dragX, dragOffset, tabSkip, layoutSelector, layoutDivider;
      private static Field backgroundColor, roundBackground, sendRect, sendPaint, sendNew;
@@ -175,7 +210,7 @@
      private static Method findSelected, syncGlass, syncTheme, resolveSource, getSource, sourceDraw;
      private static Method offsetX, offsetY, paddedBounds, themeDark, stockBlurDraw;
      private static boolean dark;
-@@ -65,7 +84,14 @@
+@@ -65,7 +89,14 @@
              installTabs();
              installButtons();
              Class<?> launchActivity = context.getClassLoader().loadClass("org.telegram.ui.LaunchActivity");
@@ -191,7 +226,7 @@
          } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
              onUnload();
              throw error;
-@@ -89,8 +115,16 @@
+@@ -89,8 +120,16 @@
          });
          buttons.forEach((view, state) -> {
              state.pressSpring.cancel();
@@ -208,7 +243,7 @@
          tabs.clear();
          bars.clear();
          buttons.clear();
-@@ -136,34 +170,84 @@
+@@ -136,34 +175,84 @@
          sendRect = field(send, "backgroundRect");
          sendPaint = field(send, "backgroundPaint");
          fabSub = field(fab, "isSubButton");
@@ -301,16 +336,49 @@
                  ViewGroup view = (ViewGroup) p.thisObject;
                  Tabs state = tabs.get(view);
                  Canvas canvas = (Canvas) p.args[0];
-@@ -190,7 +274,7 @@
+@@ -181,25 +270,44 @@
+                     }
+                     p.setObjectExtra(STOCK_DIVIDER, layoutDivider.getBoolean(view));
+                     layoutDivider.setBoolean(view, false);
+-                    if (state.drawSelection(canvas, view)) {
++                    if (state.updateSelection(view)) {
+                         p.setObjectExtra(STOCK_SELECTOR, layoutSelector.getBoolean(view));
+                         layoutSelector.setBoolean(view, false);
++                        if (state.amount < .01f) {
++                            state.drawSelection(canvas);
++                        } else {
++                            Canvas recording = state.beginLabels(view);
++                            p.setObjectExtra(TAB_CONTENT, canvas);
++                            p.args[0] = recording;
++                        }
+                     }
+                 } catch (ReflectiveOperationException | RuntimeException error) {
+                     state.setHideStock(view, false);
                      drawError(error);
                  }
              }
 -            @Override protected void afterHookedMethod(MethodHookParam p) throws Throwable {
+-                Object saved = p.getObjectExtra(STOCK_SELECTOR);
+-                if (saved != null) layoutSelector.setBoolean(p.thisObject, (boolean) saved);
+-                saved = p.getObjectExtra(STOCK_DIVIDER);
+-                if (saved != null) layoutDivider.setBoolean(p.thisObject, (boolean) saved);
 +            @Override void after(MethodHookParam p) throws ReflectiveOperationException {
-                 Object saved = p.getObjectExtra(STOCK_SELECTOR);
-                 if (saved != null) layoutSelector.setBoolean(p.thisObject, (boolean) saved);
-                 saved = p.getObjectExtra(STOCK_DIVIDER);
-@@ -198,8 +282,8 @@
++                try {
++                    Canvas canvas = (Canvas) p.getObjectExtra(TAB_CONTENT);
++                    if (canvas != null) {
++                        p.args[0] = canvas;
++                        Tabs state = tabs.get((View) p.thisObject);
++                        if (state != null) {
++                            state.labels.endRecording();
++                            if (!p.hasThrowable()) state.drawPressedTabs(canvas);
++                        }
++                    }
++                } finally {
++                    Object saved = p.getObjectExtra(STOCK_SELECTOR);
++                    if (saved != null) layoutSelector.setBoolean(p.thisObject, (boolean) saved);
++                    saved = p.getObjectExtra(STOCK_DIVIDER);
++                    if (saved != null) layoutDivider.setBoolean(p.thisObject, (boolean) saved);
++                }
              }
          }, Canvas.class);
 
@@ -321,7 +389,7 @@
                  View view = (View) p.thisObject;
                  if (!(view.getParent() instanceof View)) return;
                  Tabs state = tabs.get((View) view.getParent());
-@@ -207,14 +291,14 @@
+@@ -207,14 +315,14 @@
                  p.setObjectExtra(STOCK_SELECTOR, tabSkip.getBoolean(view));
                  tabSkip.setBoolean(view, true);
              }
@@ -339,7 +407,7 @@
                  Drawable drawable = (Drawable) p.thisObject;
                  Canvas canvas = (Canvas) p.args[0];
                  if (!canvas.isHardwareAccelerated()) return;
-@@ -254,23 +338,219 @@
+@@ -254,23 +362,218 @@
          hook(roundButton, "draw", drawButton(0), Canvas.class);
          hook(fab, "draw", drawButton(1), Canvas.class);
          hook(send, "onDraw", drawButton(2), Canvas.class);
@@ -490,10 +558,9 @@
 +    private static void registerButton(View view, Object factory, int faceKind) throws ReflectiveOperationException {
 +        if (view == null) return;
 +        Button button = buttons.computeIfAbsent(view, Button::new);
-+        if (button.capture == null && view.isAttachedToWindow()) {
-+            button.createCapture(view, factory);
-+        } else if (button.capture == null) {
-+            button.attachCapture(view, factory);
++        if (faceKind != COMPOSER_FACE && button.capture == null) {
++            if (view.isAttachedToWindow()) button.createCapture(view, factory);
++            else button.attachCapture(view, factory);
 +        }
 +        if (faceKind != STANDARD_BUTTON) installFace(view, button, faceKind);
 +    }
@@ -567,7 +634,7 @@
                  View view = (View) p.thisObject;
                  Canvas canvas = (Canvas) p.args[0];
                  if (!canvas.isHardwareAccelerated() || !view.isAttachedToWindow()
-@@ -302,13 +582,14 @@
+@@ -302,13 +605,14 @@
                          if (radius >= 0) state.radius = radius;
                      }
                  } else {
@@ -583,7 +650,7 @@
                  Button state = (Button) p.getObjectExtra(DRAW_FRAME);
                  if (state == null) return;
                  Canvas canvas = (Canvas) p.args[0];
-@@ -317,15 +598,16 @@
+@@ -317,15 +621,16 @@
                          currentRoundBackground = null;
                          currentRound = null;
                      } else if (kind == 1 && !p.hasThrowable()) {
@@ -602,7 +669,7 @@
                      }
                  } finally {
                      canvas.restoreToCount(state.save);
-@@ -406,12 +688,15 @@
+@@ -406,20 +711,26 @@
          @Override public void draw(Canvas canvas, float l, float t, float r, float b)
                  throws ReflectiveOperationException {
              if (source == null) return;
@@ -618,7 +685,27 @@
              }
          }
      }
-@@ -435,8 +720,8 @@
+
+     private static final class Tabs {
+         final boolean stockSwipe;
+-        final GlassSurface panel = new GlassSurface();
+-        final GlassSurface indicator = new GlassSurface();
++        final GlassSurface panel = new GlassSurface(.62f);
++        final GlassSurface indicator = new GlassSurface(.48f);
++        final RenderNode labels = new RenderNode("Kyant tab content");
++        final RenderNode lensLabels = new RenderNode("Kyant colored tab content");
++        int labelTint;
+         final Sample sample = new Sample();
+         final RectF panelBounds = new RectF();
+         final RectF tabBounds = new RectF();
+@@ -429,14 +740,15 @@
+         final SpringAnimation pressSpring;
+         final float dp;
+         float target = Float.NaN;
++        float amount;
+         float touchX, touchY;
+         boolean held, wasDragging, hideStock;
+
          Tabs(View view, boolean stockSwipe) {
              this.dp = dp(view);
              this.stockSwipe = stockSwipe;
@@ -629,16 +716,28 @@
          }
 
          void touch(View view, MotionEvent event) {
-@@ -463,7 +748,7 @@
+@@ -462,9 +774,8 @@
+                 throws ReflectiveOperationException {
              if (!sample.resolve(drawable) || !panelBounds(view)) return false;
              dark = (boolean) themeDark.invoke(null);
-             int base = dark ? DEFAULT_DARK : DEFAULT_LIGHT;
+-            int base = dark ? DEFAULT_DARK : DEFAULT_LIGHT;
 -            float tintAlpha = Math.max(.32f, Math.min(.54f, (sample.tint >>> 24) / 255f));
-+            float tintAlpha = dark ? .40f : .34f;
-             int tint = opacity(sample.tint == 0 ? base : sample.tint, tintAlpha);
+-            int tint = opacity(sample.tint == 0 ? base : sample.tint, tintAlpha);
++            int base = dark ? 0xFF28262D : DEFAULT_LIGHT;
++            int tint = dark ? 0x595E5965 : 0x66F7F7FA;
              panel.draw(canvas, panelBounds, dp, sample, base, tint, 8, 24, 24, 0,
                      held ? press.getValue() * .55f : 0, touchX, touchY, dark);
-@@ -507,7 +792,7 @@
+             return true;
+@@ -485,7 +796,7 @@
+             return !panelBounds.isEmpty();
+         }
+
+-        boolean drawSelection(Canvas canvas, ViewGroup view) throws ReflectiveOperationException {
++        boolean updateSelection(ViewGroup view) throws ReflectiveOperationException {
+             View selected = (View) findSelected.invoke(view);
+             if (selected == null) {
+                 setHideStock(view, false);
+@@ -507,7 +818,7 @@
              target = selectedCenter;
              wasDragging = drag;
 
@@ -647,42 +746,106 @@
              float targetPress = tracking && animations ? 1f : 0f;
              if (!animations) {
                  pressSpring.cancel();
-@@ -518,9 +803,9 @@
-             float amount = Math.max(0, Math.min(1, press.getValue()));
+@@ -515,27 +826,75 @@
+             } else if (pressSpring.getSpring().getFinalPosition() != targetPress) {
+                 pressSpring.animateToFinalPosition(targetPress);
+             }
+-            float amount = Math.max(0, Math.min(1, press.getValue()));
++            amount = Math.max(0, Math.min(1, press.getValue()));
              float cx = center.getValue();
-             // Cap the stretch at the edge of the panel to keep the glass out of the system inset.
+-            // Cap the stretch at the edge of the panel to keep the glass out of the system inset.
 -            float stretch = 1f + .15f * amount;
-+            float stretch = 1f + .32f * amount;
-             float w = Math.min(panelBounds.width() - 4 * dp, (selected.getWidth() - 4 * dp) * stretch);
+-            float w = Math.min(panelBounds.width() - 4 * dp, (selected.getWidth() - 4 * dp) * stretch);
 -            float h = Math.min(panelBounds.height() - 4 * dp, selected.getHeight() * (.88f + .17f * amount));
-+            float h = Math.min(panelBounds.height() - 4 * dp, selected.getHeight() * (.95f + .27f * amount));
++            float scale = 1f + (78f / 56f - 1f) * amount;
++            float availableWidth = view.getWidth() - 2 * dp;
++            float availableHeight = view.getHeight() - 2 * dp;
++            float w = Math.min(availableWidth, (selected.getWidth() - 4 * dp) * scale);
++            float h = Math.min(availableHeight, Math.min(panelBounds.height() - 4 * dp, selected.getHeight()) * scale);
              if (w <= 0 || h <= 0) {
                  setHideStock(view, false);
                  return false;
-@@ -532,10 +817,20 @@
-             int base = dark ? DEFAULT_DARK : DEFAULT_LIGHT;
-             int tint = dark ? opacity(0xFF94BFFF, .13f + .11f * amount)
-                             : opacity(0xFF5675A1, .12f + .10f * amount);
+             }
+-            cx = Math.max(panelBounds.left + 2 * dp + w / 2, Math.min(panelBounds.right - 2 * dp - w / 2, cx));
+-            float cy = Math.max(panelBounds.top + 2 * dp + h / 2,
+-                    Math.min(panelBounds.bottom - 2 * dp - h / 2, selectedY));
+-            tabBounds.set(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2);
+-            int base = dark ? DEFAULT_DARK : DEFAULT_LIGHT;
+-            int tint = dark ? opacity(0xFF94BFFF, .13f + .11f * amount)
+-                            : opacity(0xFF5675A1, .12f + .10f * amount);
 -            indicator.draw(canvas, tabBounds, dp, sample, base, tint, 0,
 -                    10, 14, .25f + .5f * amount, amount, cx, cy, dark);
++            float spill = 6 * dp * amount;
++            float left = Math.max(dp, panelBounds.left + 2 * dp - spill);
++            float right = Math.min(view.getWidth() - dp, panelBounds.right - 2 * dp + spill);
++            float top = Math.max(dp, panelBounds.top + 2 * dp - spill);
++            float bottom = Math.min(view.getHeight() - dp, panelBounds.bottom - 2 * dp + spill);
++            w = Math.min(w, right - left);
++            h = Math.min(h, bottom - top);
++            cx = Math.max(left + w / 2f, Math.min(right - w / 2f, cx));
++            float cy = Math.max(top + h / 2f, Math.min(bottom - h / 2f, selectedY));
++            tabBounds.set(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f);
+             setHideStock(view, true);
+             return true;
++        }
++
++        Canvas beginLabels(ViewGroup view) {
++            int width = view.getWidth(), height = view.getHeight();
++            labels.setPosition(0, 0, width, height);
++            lensLabels.setPosition(0, 0, width, height);
++            return labels.beginRecording(width, height);
++        }
++
++        void drawPressedTabs(Canvas canvas) throws ReflectiveOperationException {
++            // Play back the same native children in both passes. The tinted pass uses
++            // their actual alpha, so the lens sees the icons, labels and counters.
++            canvas.drawRenderNode(labels);
++            int accent = dark ? 0xFFAC75FF : 0xFF7640DC;
++            if (labelTint != accent) {
++                lensLabels.setRenderEffect(RenderEffect.createColorFilterEffect(
++                        new BlendModeColorFilter(accent, BlendMode.SRC_IN)));
++                labelTint = accent;
++            }
++            Canvas recording = lensLabels.beginRecording(labels.getWidth(), labels.getHeight());
++            try {
++                recording.drawRenderNode(labels);
++            } finally {
++                lensLabels.endRecording();
++            }
++            drawSelection(canvas);
++        }
++
++        void drawSelection(Canvas canvas) throws ReflectiveOperationException {
++            float cx = tabBounds.centerX(), cy = tabBounds.centerY();
++            int initialTint = dark ? 0x1AFFFFFF : 0x19000000;
 +            if (amount < .01f) {
-+                indicator.draw(canvas, tabBounds, dp, null, 0, tint, 0, 0, 0, 0, 0, cx, cy, dark);
++                indicator.draw(canvas, tabBounds, dp, null, 0, initialTint, 0, 0, 0, 0, 0, cx, cy, dark);
 +            } else {
++                int tint = opacity(dark ? 0xFFE5D8F8 : 0xFFF7EDFF, .04f + .08f * amount);
++                int base = dark ? 0xFF28262D : DEFAULT_LIGHT;
 +                indicator.draw(canvas, tabBounds, dp, this::drawIndicatorSource, base, tint, 0,
 +                        10 * amount, 14 * amount, 1f, amount, cx, cy, dark);
 +            }
-             setHideStock(view, true);
-             return true;
 +        }
 +
 +        void drawIndicatorSource(Canvas canvas, float l, float t, float r, float b)
 +                throws ReflectiveOperationException {
 +            sample.draw(canvas, l, t, r, b);
-+            panel.drawRecordedBackdrop(canvas, l, t, r, b);
++            panel.drawRecordedBackdrop(canvas, dp, dark);
++            canvas.drawRenderNode(lensLabels);
          }
 
          void setHideStock(ViewGroup view, boolean hide) {
-@@ -557,15 +852,17 @@
+@@ -548,7 +907,7 @@
+     private static final class Button {
+         final WeakReference<View> view;
+         final float dp;
+-        final GlassSurface surface = new GlassSurface();
++        final GlassSurface surface = new GlassSurface(.24f);
+         final Sample sample = new Sample();
+         final RectF bounds = new RectF();
+         final FloatValueHolder press = new FloatValueHolder();
+@@ -557,15 +916,17 @@
          float radius;
          Shader savedShader;
          boolean sendShaderChanged;
@@ -704,7 +867,7 @@
          }
 
          void setPressed(boolean pressed) {
-@@ -574,15 +871,23 @@
+@@ -574,15 +935,23 @@
                  press.setValue(0f);
                  return;
              }
@@ -731,7 +894,7 @@
          }
 
          boolean drawRound(Canvas canvas, Drawable drawable) throws ReflectiveOperationException {
-@@ -596,17 +901,80 @@
+@@ -596,17 +965,80 @@
              return true;
          }
 
@@ -823,7 +986,7 @@
          }
 
          void finish(Canvas canvas) {
-@@ -614,11 +982,63 @@
+@@ -614,11 +1046,87 @@
                      press.getValue(), bounds.centerX(), bounds.centerY(), dark);
          }
 
@@ -852,16 +1015,17 @@
 +            if (view == null || alpha == 0) return;
 +            button.setPressed(view.isPressed() && view.isEnabled());
 +            button.bounds.set(getBounds());
++            if (kind == COMPOSER_FACE) {
++                drawStock(canvas);
++                drawComposerFeedback(canvas, view);
++                return;
++            }
 +            Rect r = getBounds();
 +            int save = alpha == 255 ? canvas.save()
 +                    : canvas.saveLayerAlpha(r.left, r.top, r.right, r.bottom, alpha);
 +            try {
-+                if (kind != FLOATING_FACE) {
-+                    button.bounds.inset(2 * button.dp, 3 * button.dp);
-+                    button.transform(canvas, view);
-+                }
 +                boolean night = (boolean) themeDark.invoke(null);
-+                boolean neutral = kind != FLOATING_FACE || fabSub.getBoolean(view);
++                boolean neutral = fabSub.getBoolean(view);
 +                int color = neutral ? (night ? DEFAULT_DARK : DEFAULT_LIGHT) : fabTint.getInt(view);
 +                if (button.drawAction(canvas, color, neutral)) return;
 +            } catch (ReflectiveOperationException | RuntimeException error) {
@@ -869,6 +1033,29 @@
 +            } finally {
 +                canvas.restoreToCount(save);
 +            }
++            drawStock(canvas);
++        }
++
++        private void drawComposerFeedback(Canvas canvas, View view) {
++            float progress = button.press.getValue();
++            if (progress <= .01f || button.bounds.isEmpty() || !canvas.isHardwareAccelerated()) return;
++            int save = canvas.save();
++            try {
++                // The icon is already inside the input island. Show its press
++                // feedback locally, without drawing a second glass background.
++                canvas.clipRect(getBounds());
++                button.bounds.inset(6 * button.dp, 6 * button.dp);
++                button.transform(canvas, view);
++                float x = button.tracking ? button.touchX : button.bounds.centerX();
++                float y = button.tracking ? button.touchY : button.bounds.centerY();
++                float radius = Math.min(button.bounds.width(), button.bounds.height()) / 2f;
++                button.surface.drawPressGlow(canvas, button.bounds, radius, progress * .55f, x, y);
++            } finally {
++                canvas.restoreToCount(save);
++            }
++        }
++
++        private void drawStock(Canvas canvas) {
 +            if (stock != null) {
 +                int backup = stock.getAlpha();
 +                stock.setAlpha(backup * alpha / 255);
