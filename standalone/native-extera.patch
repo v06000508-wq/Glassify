@@ -69,7 +69,7 @@
                  } finally {
                      canvas.restoreToCount(save);
                  }
-@@ -110,35 +139,57 @@
+@@ -110,35 +139,77 @@
      void finish(Canvas canvas, RectF bounds, float radius, float dp, float press,
                  float touchX, float touchY, boolean dark) {
          if (bounds.isEmpty()) return;
@@ -108,6 +108,26 @@
 +        }
 +    }
 +
++    void drawInnerShadow(Canvas canvas, RectF bounds, float dp, float amount) {
++        float radius = Math.min(bounds.width(), bounds.height()) / 2f;
++        if (radius <= 0 || amount < .01f) return;
++        int save = canvas.save();
++        try {
++            clip.rewind();
++            clip.addRoundRect(bounds, radius, radius, Path.Direction.CW);
++            canvas.clipPath(clip);
++            paint.setStyle(Paint.Style.STROKE);
++            for (int i = 4; i > 0; i--) {
++                paint.setColor((Math.round(8 * amount) << 24));
++                paint.setStrokeWidth(4 * i * dp * amount);
++                canvas.drawRoundRect(bounds, radius, radius, paint);
++            }
++        } finally {
++            paint.setStyle(Paint.Style.FILL);
++            canvas.restoreToCount(save);
++        }
++    }
++
 +    void drawPressGlow(Canvas canvas, RectF bounds, float radius, float press, float touchX, float touchY) {
 +        if (bounds.isEmpty()) return;
          if (press > .01f) {
@@ -126,8 +146,7 @@
 +                    new float[]{0, .48f, 1}, Shader.TileMode.CLAMP));
              canvas.drawRoundRect(bounds, radius, radius, paint);
              paint.setShader(null);
-+            paint.setBlendMode(null);
-         }
+-        }
 -
 -        if (rim == null || previousTop != bounds.top || previousBottom != bounds.bottom
 -                || previousDark != dark) {
@@ -149,6 +168,8 @@
 -                Math.max(0, radius - inset), Math.max(0, radius - inset), paint);
 -        paint.setStyle(Paint.Style.FILL);
 -        paint.setShader(null);
++            paint.setBlendMode(null);
++        }
      }
  }
 --- a/extensions/kyant_liquid_glass/1.0/native/LiquidGlass.java
@@ -168,7 +189,15 @@
  import android.graphics.Outline;
  import android.graphics.Paint;
  import android.graphics.Rect;
-@@ -25,6 +31,7 @@
+@@ -15,6 +21,7 @@
+ import android.view.MotionEvent;
+ import android.view.View;
+ import android.view.ViewGroup;
++import android.view.ViewConfiguration;
+
+ import androidx.dynamicanimation.animation.FloatValueHolder;
+ import androidx.dynamicanimation.animation.SpringAnimation;
+@@ -25,6 +32,7 @@
  import java.lang.reflect.InvocationTargetException;
  import java.lang.reflect.Method;
  import java.util.ArrayList;
@@ -176,10 +205,11 @@
  import java.util.WeakHashMap;
 
  import de.robv.android.xposed.XC_MethodHook;
-@@ -37,7 +44,17 @@
+@@ -37,15 +45,35 @@
      private static final WeakHashMap<Drawable, WeakReference<View>> bars = new WeakHashMap<>();
      private static final WeakHashMap<View, Button> buttons = new WeakHashMap<>();
      private static final String DRAW_FRAME = "glassify.kyant.drawFrame";
++    private static final String STOCK_MEASURE = "glassify.kyant.stockMeasure";
 +    private static final String TAB_CONTENT = "glassify.kyant.tabContent";
      private static final String STOCK_SELECTOR = "glassify.kyant.stockSelector";
 +    private static final String STOCK_PAINT = "glassify.kyant.stockPaint";
@@ -194,9 +224,10 @@
      private static final String STOCK_DIVIDER = "glassify.kyant.stockDivider";
      private static final int DEFAULT_LIGHT = 0xFFF7F8FB;
      private static final int DEFAULT_DARK = 0xFF1B1C21;
-@@ -45,7 +62,14 @@
+
      private static Class<?> mainActivity, tabLayout, glassTab, blurDrawable, roundButton, fab, send;
-     private static Field mainTabs, swipe, dragging, dragX, dragOffset, tabSkip, layoutSelector, layoutDivider;
+-    private static Field mainTabs, swipe, dragging, dragX, dragOffset, tabSkip, layoutSelector, layoutDivider;
++    private static Field mainTabs, swipe, tabSkip, layoutSelector, layoutDivider;
      private static Field backgroundColor, roundBackground, sendRect, sendPaint, sendNew;
 -    private static Field fabSub;
 +    private static Field fabSub, fabTint, dialogsFactory, mainFab, storiesFab;
@@ -207,10 +238,12 @@
 +    private static Method getThemedColor, getFragmentView, computeRect;
 +    private static int sendColorKey;
 +    private static Canvas currentSendCanvas;
++    private static Field stockMaxWidth, stockFillWidth;
++    private static Method dispatchTabs, measureTitle, isTabVisible, finishMeasure, setDimensions;
      private static Method findSelected, syncGlass, syncTheme, resolveSource, getSource, sourceDraw;
      private static Method offsetX, offsetY, paddedBounds, themeDark, stockBlurDraw;
      private static boolean dark;
-@@ -65,7 +89,14 @@
+@@ -65,7 +93,14 @@
              installTabs();
              installButtons();
              Class<?> launchActivity = context.getClassLoader().loadClass("org.telegram.ui.LaunchActivity");
@@ -226,7 +259,21 @@
          } catch (ReflectiveOperationException | RuntimeException | LinkageError error) {
              onUnload();
              throw error;
-@@ -89,8 +120,16 @@
+@@ -76,8 +111,7 @@
+         for (XC_MethodHook.Unhook handle : hooks) handle.unhook();
+         hooks.clear();
+         tabs.forEach((view, state) -> {
+-            state.centerSpring.cancel();
+-            state.pressSpring.cancel();
++            state.cancelSprings();
+             try {
+                 swipe.setBoolean(view, state.stockSwipe);
+             } catch (IllegalAccessException error) {
+@@ -86,11 +120,20 @@
+             view.invalidate();
+             if (view.getBackground() != null) view.getBackground().invalidateSelf();
+             invalidateTabs((ViewGroup) view);
++            view.requestLayout();
          });
          buttons.forEach((view, state) -> {
              state.pressSpring.cancel();
@@ -243,7 +290,29 @@
          tabs.clear();
          bars.clear();
          buttons.clear();
-@@ -136,34 +175,84 @@
+@@ -110,14 +153,18 @@
+
+         mainTabs = field(mainActivity, "tabsView");
+         swipe = field(tabLayout, "swipeSelectionEnabled");
+-        dragging = field(tabLayout, "isInLongPress");
+-        dragX = field(tabLayout, "animatedLongSelectedViewCenterX");
+-        dragOffset = field(tabLayout, "animatedLongSelectedViewOffsetX");
+         layoutSelector = field(tabLayout, "drawCustomSelector");
+         layoutDivider = field(tabLayout, "drawTopDivider");
+         stockBlurDraw = method(blurDrawable, "draw", Canvas.class);
+         tabSkip = field(glassTab, "skipDrawSelector");
+         findSelected = method(tabLayout, "findSelectedTab");
++        stockMaxWidth = field(tabLayout, "maxWidthPx");
++        stockFillWidth = field(tabLayout, "fillAvailableWidth");
++        dispatchTabs = method(tabLayout, "dispatchTouchEvent", MotionEvent.class);
++        measureTitle = glassTab.getMethod("measureTextWidth", float.class);
++        isTabVisible = tabLayout.getMethod("isViewVisible", View.class);
++        finishMeasure = method(tabLayout.getSuperclass(), "calculateTotalSizesAfterMeasure");
++        setDimensions = method(View.class, "setMeasuredDimension", int.class, int.class);
+
+         syncGlass = method(blurDrawable, "checkGlassSettings");
+         syncTheme = method(blurDrawable, "checkThemeColors");
+@@ -136,34 +183,122 @@
          sendRect = field(send, "backgroundRect");
          sendPaint = field(send, "backgroundPaint");
          fabSub = field(fab, "isSubButton");
@@ -312,11 +381,51 @@
 
 -        hook(tabLayout, "dispatchTouchEvent", new XC_MethodHook() {
 -            @Override protected void beforeHookedMethod(MethodHookParam p) {
-+        hook(tabLayout, "dispatchTouchEvent", new UiHook() {
-+            @Override void before(MethodHookParam p) {
-                 View view = (View) p.thisObject;
+-                View view = (View) p.thisObject;
++        hook(tabLayout, "onMeasure", new UiHook() {
++            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
++                ViewGroup view = (ViewGroup) p.thisObject;
                  Tabs state = tabs.get(view);
-                 if (state != null) state.touch(view, (MotionEvent) p.args[0]);
+-                if (state != null) state.touch(view, (MotionEvent) p.args[0]);
++                if (state == null) return;
++                int incoming = (int) p.args[0];
++                if (View.MeasureSpec.getMode(incoming) == View.MeasureSpec.UNSPECIFIED) return;
++                int width = state.platterWidth(View.MeasureSpec.getSize(incoming));
++                if (width <= 0) return;
++                p.setObjectExtra(STOCK_MEASURE, new Object[]{
++                        stockMaxWidth.getInt(view), stockFillWidth.getBoolean(view)});
++                stockMaxWidth.setInt(view, 0);
++                stockFillWidth.setBoolean(view, true);
++                p.args[0] = View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY);
++            }
++
++            @Override void after(MethodHookParam p) throws ReflectiveOperationException {
++                Object[] saved = (Object[]) p.getObjectExtra(STOCK_MEASURE);
++                if (saved == null) return;
++                stockMaxWidth.setInt(p.thisObject, (int) saved[0]);
++                stockFillWidth.setBoolean(p.thisObject, (boolean) saved[1]);
++                if (p.hasThrowable()) return;
++                ViewGroup view = (ViewGroup) p.thisObject;
++                Tabs state = tabs.get(view);
++                if (state != null) state.distributeTabs(view, View.MeasureSpec.getSize((int) p.args[0]));
++            }
++        }, int.class, int.class);
++        hook(tabLayout, "measureTabTexts", new UiHook() {
++            @Override void before(MethodHookParam p) {
++                if (tabs.containsKey((View) p.thisObject)) p.args[0] = 10f;
++            }
++        }, float.class);
++        hook(tabLayout, "applyPassTextSize", new UiHook() {
++            @Override void before(MethodHookParam p) {
++                if (tabs.containsKey((View) p.thisObject)) p.args[0] = 2; // the 10sp pass
++            }
++        }, int.class);
++
++        hook(tabLayout, "dispatchTouchEvent", new UiHook() {
++            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
++                ViewGroup view = (ViewGroup) p.thisObject;
++                Tabs state = tabs.get(view);
++                if (state != null && state.handleTouch(view, (MotionEvent) p.args[0])) p.setResult(true);
              }
          }, MotionEvent.class);
 
@@ -336,7 +445,7 @@
                  ViewGroup view = (ViewGroup) p.thisObject;
                  Tabs state = tabs.get(view);
                  Canvas canvas = (Canvas) p.args[0];
-@@ -181,25 +270,44 @@
+@@ -181,25 +316,44 @@
                      }
                      p.setObjectExtra(STOCK_DIVIDER, layoutDivider.getBoolean(view));
                      layoutDivider.setBoolean(view, false);
@@ -370,7 +479,7 @@
 +                        Tabs state = tabs.get((View) p.thisObject);
 +                        if (state != null) {
 +                            state.labels.endRecording();
-+                            if (!p.hasThrowable()) state.drawPressedTabs(canvas);
++                            if (!p.hasThrowable()) state.drawPressedTabs(canvas, (ViewGroup) p.thisObject);
 +                        }
 +                    }
 +                } finally {
@@ -389,7 +498,7 @@
                  View view = (View) p.thisObject;
                  if (!(view.getParent() instanceof View)) return;
                  Tabs state = tabs.get((View) view.getParent());
-@@ -207,14 +315,14 @@
+@@ -207,14 +361,14 @@
                  p.setObjectExtra(STOCK_SELECTOR, tabSkip.getBoolean(view));
                  tabSkip.setBoolean(view, true);
              }
@@ -407,7 +516,17 @@
                  Drawable drawable = (Drawable) p.thisObject;
                  Canvas canvas = (Canvas) p.args[0];
                  if (!canvas.isHardwareAccelerated()) return;
-@@ -254,23 +362,218 @@
+@@ -244,7 +398,8 @@
+         if (view == null || !blurDrawable.isInstance(view.getBackground())) return;
+         if (!tabs.containsKey(view)) tabs.put(view, new Tabs(view, swipe.getBoolean(view)));
+         bars.put(view.getBackground(), new WeakReference<>(view));
+-        swipe.setBoolean(view, true);
++        swipe.setBoolean(view, false); // the drag starts from any tab
++        view.requestLayout();
+         view.getBackground().invalidateSelf();
+         view.invalidate();
+         invalidateTabs(view);
+@@ -254,23 +409,218 @@
          hook(roundButton, "draw", drawButton(0), Canvas.class);
          hook(fab, "draw", drawButton(1), Canvas.class);
          hook(send, "onDraw", drawButton(2), Canvas.class);
@@ -634,7 +753,7 @@
                  View view = (View) p.thisObject;
                  Canvas canvas = (Canvas) p.args[0];
                  if (!canvas.isHardwareAccelerated() || !view.isAttachedToWindow()
-@@ -302,13 +605,14 @@
+@@ -302,13 +652,14 @@
                          if (radius >= 0) state.radius = radius;
                      }
                  } else {
@@ -650,7 +769,7 @@
                  Button state = (Button) p.getObjectExtra(DRAW_FRAME);
                  if (state == null) return;
                  Canvas canvas = (Canvas) p.args[0];
-@@ -317,15 +621,16 @@
+@@ -317,15 +668,16 @@
                          currentRoundBackground = null;
                          currentRound = null;
                      } else if (kind == 1 && !p.hasThrowable()) {
@@ -669,7 +788,7 @@
                      }
                  } finally {
                      canvas.restoreToCount(state.save);
-@@ -406,20 +711,26 @@
+@@ -406,67 +758,181 @@
          @Override public void draw(Canvas canvas, float l, float t, float r, float b)
                  throws ReflectiveOperationException {
              if (source == null) return;
@@ -687,48 +806,215 @@
      }
 
      private static final class Tabs {
++        private static final float PRESSED_SCALE = 78f / 56f;
          final boolean stockSwipe;
 -        final GlassSurface panel = new GlassSurface();
 -        final GlassSurface indicator = new GlassSurface();
 +        final GlassSurface panel = new GlassSurface(.62f);
-+        final GlassSurface indicator = new GlassSurface(.48f);
++        final GlassSurface indicator = new GlassSurface(.54f);
 +        final RenderNode labels = new RenderNode("Kyant tab content");
 +        final RenderNode lensLabels = new RenderNode("Kyant colored tab content");
-+        int labelTint;
          final Sample sample = new Sample();
          final RectF panelBounds = new RectF();
          final RectF tabBounds = new RectF();
-@@ -429,14 +740,15 @@
-         final SpringAnimation pressSpring;
+         final FloatValueHolder center = new FloatValueHolder();
+         final FloatValueHolder press = new FloatValueHolder();
+-        final SpringAnimation centerSpring;
+-        final SpringAnimation pressSpring;
++        final FloatValueHolder scaleX = new FloatValueHolder(1f);
++        final FloatValueHolder scaleY = new FloatValueHolder(1f);
++        final FloatValueHolder offset = new FloatValueHolder();
++        final FloatValueHolder speed = new FloatValueHolder();
++        final SpringAnimation centerSpring, pressSpring, scaleXSpring, scaleYSpring, offsetSpring, speedSpring;
          final float dp;
++        final int touchSlop;
++        int labelTint;
          float target = Float.NaN;
+-        float touchX, touchY;
+-        boolean held, wasDragging, hideStock;
 +        float amount;
-         float touchX, touchY;
-         boolean held, wasDragging, hideStock;
++        float startX, startY, startCenter, startWidth, touchX, touchY;
++        float activeWidth;
++        long downTime;
++        boolean held, draggingTab, hideStock;
 
          Tabs(View view, boolean stockSwipe) {
              this.dp = dp(view);
              this.stockSwipe = stockSwipe;
 -            centerSpring = spring(center, view, 400, .75f, .25f);
 -            pressSpring = spring(press, view, 650, .78f, .004f);
+-        }
+-
+-        void touch(View view, MotionEvent event) {
++            touchSlop = ViewConfiguration.get(view.getContext()).getScaledTouchSlop();
 +            centerSpring = spring(center, view, 1000, 1f, .25f);
 +            pressSpring = spring(press, view, 1000, 1f, .004f);
-         }
-
-         void touch(View view, MotionEvent event) {
-@@ -462,9 +774,8 @@
-                 throws ReflectiveOperationException {
++            scaleXSpring = spring(scaleX, view, 250, .6f, .001f);
++            scaleYSpring = spring(scaleY, view, 250, .7f, .001f);
++            offsetSpring = spring(offset, view, 300, 1f, .25f);
++            speedSpring = spring(speed, view, 300, .5f, .03f);
++            scaleXSpring.getSpring().setFinalPosition(1f);
++            scaleYSpring.getSpring().setFinalPosition(1f);
++            centerSpring.addUpdateListener((animation, value, velocity) -> {
++                float width = panelBounds.width();
++                if (width > 0) speedSpring.animateToFinalPosition(velocity / width);
++            });
++        }
++
++        void cancelSprings() {
++            centerSpring.cancel();
++            pressSpring.cancel();
++            scaleXSpring.cancel();
++            scaleYSpring.cancel();
++            offsetSpring.cancel();
++            speedSpring.cancel();
++        }
++
++        int platterWidth(int available) {
++            return Math.min(Math.round(430 * dp), available - Math.round(24 * dp));
++        }
++
++        void distributeTabs(ViewGroup view, int width) throws ReflectiveOperationException {
++            int available = width - view.getPaddingLeft() - view.getPaddingRight();
++            if (available <= 0) return;
++            List<View> visible = new ArrayList<>();
++            for (int i = 0; i < view.getChildCount(); i++) {
++                View item = view.getChildAt(i);
++                if ((boolean) isTabVisible.invoke(view, item)) visible.add(item);
++            }
++            if (visible.isEmpty()) return;
++            float[] titleWidths = new float[visible.size()];
++            for (int i = 0; i < visible.size(); i++) {
++                View item = visible.get(i);
++                if (glassTab.isInstance(item)) titleWidths[i] = (float) measureTitle.invoke(item, 10f);
++                titleWidths[i] = Math.max(40 * dp, titleWidths[i] + 8 * dp);
++            }
++            int[] widths = TabWidths.distribute(titleWidths, available);
++            int heightSpec = View.MeasureSpec.makeMeasureSpec(
++                    Math.max(0, view.getMeasuredHeight() - view.getPaddingTop() - view.getPaddingBottom()),
++                    View.MeasureSpec.EXACTLY);
++            for (int i = 0; i < widths.length; i++) {
++                View item = visible.get(i);
++                if (item.getMeasuredWidth() != widths[i]) {
++                    item.measure(View.MeasureSpec.makeMeasureSpec(widths[i], View.MeasureSpec.EXACTLY), heightSpec);
++                }
++            }
++            setDimensions.invoke(view, width, view.getMeasuredHeight());
++            finishMeasure.invoke(view);
++        }
++
++        // Pick by visual position so the same gesture works with RTL and unequal labels.
++        View nearest(ViewGroup view, float x) {
++            View best = null;
++            float distance = Float.MAX_VALUE;
++            for (int i = 0; i < view.getChildCount(); i++) {
++                View item = view.getChildAt(i);
++                if (item.getVisibility() != View.VISIBLE || item.getWidth() <= 0 || !item.isEnabled()) continue;
++                float next = Math.abs(x - childCenter(item));
++                if (next < distance) {
++                    distance = next;
++                    best = item;
++                }
++            }
++            return best;
++        }
++
++        boolean handleTouch(ViewGroup view, MotionEvent event) throws ReflectiveOperationException {
+             switch (event.getActionMasked()) {
+                 case MotionEvent.ACTION_DOWN:
+-                    held = true;
+-                    break;
++                    View initial = nearest(view, event.getX());
++                    draggingTab = false;
++                    held = initial != null;
++                    if (initial != null) {
++                        touchX = startX = event.getX();
++                        touchY = startY = event.getY();
++                        downTime = event.getEventTime();
++                        startCenter = childCenter(initial);
++                        startWidth = initial.getWidth();
++                    }
++                    view.invalidate();
++                    return false;
++                case MotionEvent.ACTION_MOVE:
++                    if (!held) return false;
++                    touchX = event.getX();
++                    touchY = event.getY();
++                    if (!draggingTab && event.getEventTime() - downTime < ViewConfiguration.getLongPressTimeout()
++                            && Math.abs(touchX - startX) > touchSlop
++                            && Math.abs(touchX - startX) > Math.abs(touchY - startY)) {
++                        MotionEvent cancel = MotionEvent.obtain(event);
++                        cancel.setAction(MotionEvent.ACTION_CANCEL);
++                        try {
++                            XposedBridge.invokeOriginalMethod(dispatchTabs, view, new Object[]{cancel});
++                        } finally {
++                            cancel.recycle();
++                        }
++                        draggingTab = true;
++                        if (view.getParent() != null) view.getParent().requestDisallowInterceptTouchEvent(true);
++                    }
++                    view.invalidate();
++                    return draggingTab;
+                 case MotionEvent.ACTION_UP:
+                 case MotionEvent.ACTION_CANCEL:
++                case MotionEvent.ACTION_POINTER_DOWN:
++                    boolean consume = draggingTab;
+                     held = false;
+-                    break;
+-                case MotionEvent.ACTION_MOVE:
+-                    break;
++                    draggingTab = false;
++                    if (view.getParent() != null && consume) view.getParent().requestDisallowInterceptTouchEvent(false);
++                    if (consume && event.getActionMasked() == MotionEvent.ACTION_UP) {
++                        View chosen = nearest(view, event.getX());
++                        if (chosen != null) chosen.performClick();
++                    }
++                    view.invalidate();
++                    return consume;
+                 default:
+-                    return;
+-            }
+-            touchX = event.getX();
+-            touchY = event.getY();
+-            view.invalidate();
+-        }
+-
+-        boolean drawPanel(Canvas canvas, ViewGroup view, Drawable drawable)
+-                throws ReflectiveOperationException {
++                    return draggingTab;
++            }
++        }
++
++        boolean drawPanel(Canvas canvas, ViewGroup view, Drawable drawable) throws ReflectiveOperationException {
              if (!sample.resolve(drawable) || !panelBounds(view)) return false;
              dark = (boolean) themeDark.invoke(null);
 -            int base = dark ? DEFAULT_DARK : DEFAULT_LIGHT;
 -            float tintAlpha = Math.max(.32f, Math.min(.54f, (sample.tint >>> 24) / 255f));
 -            int tint = opacity(sample.tint == 0 ? base : sample.tint, tintAlpha);
-+            int base = dark ? 0xFF28262D : DEFAULT_LIGHT;
-+            int tint = dark ? 0x595E5965 : 0x66F7F7FA;
++            int base = dark ? 0xFF222127 : DEFAULT_LIGHT;
++            int tint = dark ? 0x66504858 : 0x66FAFAFA;
              panel.draw(canvas, panelBounds, dp, sample, base, tint, 8, 24, 24, 0,
-                     held ? press.getValue() * .55f : 0, touchX, touchY, dark);
+-                    held ? press.getValue() * .55f : 0, touchX, touchY, dark);
++                    amount * .55f, tabBounds.centerX(), panelBounds.centerY(), dark);
              return true;
-@@ -485,7 +796,7 @@
+         }
+
+@@ -478,64 +944,143 @@
+                 top = Math.min(top, item.getTop());
+                 bottom = Math.max(bottom, item.getBottom());
+             }
+-            float inset = 4 * dp;
+-            panelBounds.set(Math.max(inset, sample.padded.left), Math.max(sample.padded.top, top - inset),
+-                    Math.min(view.getWidth() - inset, sample.padded.right),
+-                    Math.min(sample.padded.bottom, bottom + inset));
++            if (top >= bottom) return false;
++            float cy = (top + bottom) / 2f;
++            float half = Math.min(32 * dp, (bottom - top) / 2f + 4 * dp);
++            float dx = offset.getValue();
++            float horizontal = Math.min(5 * dp, 8 * dp * amount);
++            panelBounds.set(Math.max(dp, 6 * dp + dx - horizontal), Math.max(dp, cy - half - 1.6f * dp * amount),
++                    Math.min(view.getWidth() - dp, view.getWidth() - 6 * dp + dx + horizontal),
++                    Math.min(view.getHeight() - dp, cy + half + 1.6f * dp * amount));
              return !panelBounds.isEmpty();
          }
 
@@ -737,32 +1023,87 @@
              View selected = (View) findSelected.invoke(view);
              if (selected == null) {
                  setHideStock(view, false);
-@@ -507,7 +818,7 @@
-             target = selectedCenter;
-             wasDragging = drag;
-
--            boolean tracking = (held && Math.abs(touchX - selectedCenter) <= selected.getWidth() / 2f) || drag;
-+            boolean tracking = held || drag || centerSpring.isRunning();
-             float targetPress = tracking && animations ? 1f : 0f;
-             if (!animations) {
-                 pressSpring.cancel();
-@@ -515,27 +826,75 @@
-             } else if (pressSpring.getSpring().getFinalPosition() != targetPress) {
-                 pressSpring.animateToFinalPosition(targetPress);
+                 return false;
              }
+-
+-            float selectedCenter = selected.getX() + selected.getWidth() / 2f;
+-            float selectedY = selected.getY() + selected.getHeight() / 2f;
+-            boolean drag = dragging.getBoolean(view);
++            float selectedCenter = childCenter(selected);
+             boolean animations = ValueAnimator.areAnimatorsEnabled();
+-            if (!animations) centerSpring.cancel();
+-            if (Float.isNaN(target) || !animations) center.setValue(selectedCenter);
+-            if (drag) {
+-                centerSpring.cancel();
+-                center.setValue(dragX.getFloat(view) + dragOffset.getFloat(view));
+-            } else if (animations && (target != selectedCenter || wasDragging)) {
+-                centerSpring.animateToFinalPosition(selectedCenter);
+-            }
+-            target = selectedCenter;
+-            wasDragging = drag;
+-
+-            boolean tracking = (held && Math.abs(touchX - selectedCenter) <= selected.getWidth() / 2f) || drag;
+-            float targetPress = tracking && animations ? 1f : 0f;
++            if (Float.isNaN(target)) {
++                center.setValue(selectedCenter);
++                activeWidth = selected.getWidth();
++            }
++
++            float fraction = draggingTab ? (touchX - startX) / Math.max(1, panelBounds.width()) : 0;
++            fraction = Math.max(-1, Math.min(1, fraction));
++            float slide = 4 * dp * Math.signum(fraction) * (1 - (float) Math.pow(1 - Math.abs(fraction), 3));
++            float origin = held ? startCenter + (draggingTab ? touchX - startX : 0f) : selectedCenter;
++            float goal = Math.max(panelBounds.left, Math.min(panelBounds.right, origin));
++            float lift = held || Math.abs(center.getValue() - selectedCenter) > view.getWidth() * .025f ? 1f : 0f;
+             if (!animations) {
+-                pressSpring.cancel();
++                cancelSprings();
++                center.setValue(goal);
+                 press.setValue(0);
+-            } else if (pressSpring.getSpring().getFinalPosition() != targetPress) {
+-                pressSpring.animateToFinalPosition(targetPress);
+-            }
 -            float amount = Math.max(0, Math.min(1, press.getValue()));
-+            amount = Math.max(0, Math.min(1, press.getValue()));
-             float cx = center.getValue();
+-            float cx = center.getValue();
 -            // Cap the stretch at the edge of the panel to keep the glass out of the system inset.
 -            float stretch = 1f + .15f * amount;
 -            float w = Math.min(panelBounds.width() - 4 * dp, (selected.getWidth() - 4 * dp) * stretch);
 -            float h = Math.min(panelBounds.height() - 4 * dp, selected.getHeight() * (.88f + .17f * amount));
-+            float scale = 1f + (78f / 56f - 1f) * amount;
-+            float availableWidth = view.getWidth() - 2 * dp;
-+            float availableHeight = view.getHeight() - 2 * dp;
-+            float w = Math.min(availableWidth, (selected.getWidth() - 4 * dp) * scale);
-+            float h = Math.min(availableHeight, Math.min(panelBounds.height() - 4 * dp, selected.getHeight()) * scale);
-             if (w <= 0 || h <= 0) {
+-            if (w <= 0 || h <= 0) {
++                scaleX.setValue(1);
++                scaleY.setValue(1);
++                offset.setValue(0);
++                speed.setValue(0);
++            } else {
++                if (target != goal) centerSpring.animateToFinalPosition(goal);
++                animate(pressSpring, lift);
++                animate(scaleXSpring, lift == 0 ? 1f : PRESSED_SCALE);
++                animate(scaleYSpring, lift == 0 ? 1f : PRESSED_SCALE);
++                if (draggingTab) {
++                    offsetSpring.cancel();
++                    offset.setValue(slide);
++                } else {
++                    animate(offsetSpring, 0f);
++                }
++            }
++            target = goal;
++            amount = Math.max(0, Math.min(1, press.getValue()));
++
++            if (held) activeWidth = startWidth;
++            else if (amount < .01f) activeWidth = selected.getWidth();
++            float restHeight = Math.max(1f, panelBounds.height() - 8 * dp);
++            float restWidth = Math.max(activeWidth - 2 * dp, activeWidth < restHeight ? restHeight * 1.2f : 1);
++            float velocity = speed.getValue() / 10f;
++            float stretchX = Math.max(-.2f, Math.min(.2f, velocity * .75f));
++            float stretchY = Math.max(-.2f, Math.min(.2f, velocity * .25f));
++            float spill = 6 * dp * amount;
++            float left = Math.max(dp, panelBounds.left + 4 * dp - spill);
++            float right = Math.min(view.getWidth() - dp, panelBounds.right - 4 * dp + spill);
++            float top = Math.max(dp, panelBounds.top + 4 * dp - spill);
++            float bottom = Math.min(view.getHeight() - dp, panelBounds.bottom - 4 * dp + spill);
++            float width = Math.min(right - left, restWidth * scaleX.getValue() / (1f - stretchX));
++            float height = Math.min(bottom - top, restHeight * scaleY.getValue() * (1f - stretchY));
++            if (width <= 0 || height <= 0) {
                  setHideStock(view, false);
                  return false;
              }
@@ -775,18 +1116,19 @@
 -                            : opacity(0xFF5675A1, .12f + .10f * amount);
 -            indicator.draw(canvas, tabBounds, dp, sample, base, tint, 0,
 -                    10, 14, .25f + .5f * amount, amount, cx, cy, dark);
-+            float spill = 6 * dp * amount;
-+            float left = Math.max(dp, panelBounds.left + 2 * dp - spill);
-+            float right = Math.min(view.getWidth() - dp, panelBounds.right - 2 * dp + spill);
-+            float top = Math.max(dp, panelBounds.top + 2 * dp - spill);
-+            float bottom = Math.min(view.getHeight() - dp, panelBounds.bottom - 2 * dp + spill);
-+            w = Math.min(w, right - left);
-+            h = Math.min(h, bottom - top);
-+            cx = Math.max(left + w / 2f, Math.min(right - w / 2f, cx));
-+            float cy = Math.max(top + h / 2f, Math.min(bottom - h / 2f, selectedY));
-+            tabBounds.set(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f);
++            float cx = Math.max(left + width / 2, Math.min(right - width / 2, center.getValue() + offset.getValue()));
++            float cy = Math.max(top + height / 2, Math.min(bottom - height / 2, panelBounds.centerY()));
++            tabBounds.set(cx - width / 2, cy - height / 2, cx + width / 2, cy + height / 2);
              setHideStock(view, true);
              return true;
++        }
++
++        static float childCenter(View child) {
++            return child.getX() + child.getWidth() / 2f;
++        }
++
++        static void animate(SpringAnimation spring, float target) {
++            if (spring.getSpring().getFinalPosition() != target) spring.animateToFinalPosition(target);
 +        }
 +
 +        Canvas beginLabels(ViewGroup view) {
@@ -796,9 +1138,7 @@
 +            return labels.beginRecording(width, height);
 +        }
 +
-+        void drawPressedTabs(Canvas canvas) throws ReflectiveOperationException {
-+            // Play back the same native children in both passes. The tinted pass uses
-+            // their actual alpha, so the lens sees the icons, labels and counters.
++        void drawPressedTabs(Canvas canvas, ViewGroup view) throws ReflectiveOperationException {
 +            canvas.drawRenderNode(labels);
 +            int accent = dark ? 0xFFAC75FF : 0xFF7640DC;
 +            if (labelTint != accent) {
@@ -808,7 +1148,16 @@
 +            }
 +            Canvas recording = lensLabels.beginRecording(labels.getWidth(), labels.getHeight());
 +            try {
-+                recording.drawRenderNode(labels);
++                float glyphScale = 1f + .2f * amount;
++                for (int i = 0; i < view.getChildCount(); i++) {
++                    View item = view.getChildAt(i);
++                    if (item.getVisibility() != View.VISIBLE) continue;
++                    int save = recording.save();
++                    recording.clipRect(item.getX(), 0, item.getX() + item.getWidth(), view.getHeight());
++                    recording.scale(glyphScale, glyphScale, childCenter(item), item.getY() + item.getHeight() / 2f);
++                    recording.drawRenderNode(labels);
++                    recording.restoreToCount(save);
++                }
 +            } finally {
 +                lensLabels.endRecording();
 +            }
@@ -821,10 +1170,10 @@
 +            if (amount < .01f) {
 +                indicator.draw(canvas, tabBounds, dp, null, 0, initialTint, 0, 0, 0, 0, 0, cx, cy, dark);
 +            } else {
-+                int tint = opacity(dark ? 0xFFE5D8F8 : 0xFFF7EDFF, .04f + .08f * amount);
-+                int base = dark ? 0xFF28262D : DEFAULT_LIGHT;
-+                indicator.draw(canvas, tabBounds, dp, this::drawIndicatorSource, base, tint, 0,
-+                        10 * amount, 14 * amount, 1f, amount, cx, cy, dark);
++                int tint = opacity(dark ? 0xFFE5D8F8 : 0xFFF7EDFF, .025f + .045f * amount);
++                indicator.draw(canvas, tabBounds, dp, this::drawIndicatorSource, dark ? 0xFF222127 : DEFAULT_LIGHT,
++                        tint, 0, 10 * amount, 14 * amount, 1f, amount, cx, cy, dark);
++                indicator.drawInnerShadow(canvas, tabBounds, dp, amount);
 +            }
 +        }
 +
@@ -836,7 +1185,7 @@
          }
 
          void setHideStock(ViewGroup view, boolean hide) {
-@@ -548,7 +907,7 @@
+@@ -548,7 +1093,7 @@
      private static final class Button {
          final WeakReference<View> view;
          final float dp;
@@ -845,7 +1194,7 @@
          final Sample sample = new Sample();
          final RectF bounds = new RectF();
          final FloatValueHolder press = new FloatValueHolder();
-@@ -557,15 +916,17 @@
+@@ -557,15 +1102,17 @@
          float radius;
          Shader savedShader;
          boolean sendShaderChanged;
@@ -867,7 +1216,7 @@
          }
 
          void setPressed(boolean pressed) {
-@@ -574,15 +935,23 @@
+@@ -574,15 +1121,23 @@
                  press.setValue(0f);
                  return;
              }
@@ -894,7 +1243,7 @@
          }
 
          boolean drawRound(Canvas canvas, Drawable drawable) throws ReflectiveOperationException {
-@@ -596,17 +965,80 @@
+@@ -596,17 +1151,80 @@
              return true;
          }
 
@@ -986,7 +1335,7 @@
          }
 
          void finish(Canvas canvas) {
-@@ -614,11 +1046,87 @@
+@@ -614,11 +1232,87 @@
                      press.getValue(), bounds.centerX(), bounds.centerY(), dark);
          }
 
@@ -1135,3 +1484,36 @@
 +        }
 +        """;
  }
+--- /dev/null
++++ b/extensions/kyant_liquid_glass/1.0/native/TabWidths.java
+@@ -0,0 +1,30 @@
++package glassify.kyant;
++
++final class TabWidths {
++    private TabWidths() {}
++
++    // Keep equal columns when every title fits. On a narrow bar, assign room
++    // in proportion to the fitted widths and let the last item absorb rounding.
++    static int[] distribute(float[] fitted, int available) {
++        int[] result = new int[fitted.length];
++        if (fitted.length == 0 || available <= 0) return result;
++        float total = 0;
++        float widest = 0;
++        for (float width : fitted) {
++            total += width;
++            widest = Math.max(widest, width);
++        }
++        float equal = (float) available / fitted.length;
++        boolean uniform = widest <= equal;
++        float cumulative = 0;
++        int previous = 0;
++        for (int i = 0; i < fitted.length; i++) {
++            cumulative += uniform ? 1 : fitted[i];
++            int end = i == fitted.length - 1 ? available
++                    : Math.round(available * cumulative / (uniform ? fitted.length : total));
++            result[i] = end - previous;
++            previous = end;
++        }
++        return result;
++    }
++}
