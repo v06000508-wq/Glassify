@@ -46,6 +46,7 @@ Glassify verifies each downloaded extension against the SHA-256 hash declared in
 
 - `ios_header` 1.2 — compact iOS-style chat header with native Liquid Glass, centered title/subtitle handling, avatar-aware layout and full stock-state restoration when disabled. Requires Glassify 0.2.1+ and exteraGram 12.9.0+.
 - `liquidglass_plus` 1.3 — five Blur3 surface materials (`Clear`, `Frosted`, `Crystal`, `Satin`, `Deep Glass`) with adjustable inner glow and depth. The top chat-header blur remains Frosted and is not changed by the selected surface type. Requires Glassify 0.2.1+ and exteraGram 12.10.6+.
+- `kyant_liquid_glass` 1.0 — native AndroidLiquidGlass lens for the main bottom tabs and round chat buttons, with a spring-driven tab indicator, blur, refraction and color dispersion. The send button and floating action buttons also get spring feedback and glass highlights. Requires Android 13+, Glassify 0.5.0+ and exteraGram 13.2.2+. The [native source](extensions/kyant_liquid_glass/1.0/native) includes the shader adapted from [AndroidLiquidGlass](https://github.com/Kyant0/AndroidLiquidGlass) under Apache 2.0 and the DEX build script.
 
 ## Security model
 
