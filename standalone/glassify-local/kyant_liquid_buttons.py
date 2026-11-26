@@ -10,9 +10,9 @@ GLASSIFY_EXTENSION = {
     "min_exteragram": "13.2.2"
 }
 
-_DEX_PATH = "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/local.kyant_liquid_buttons/1.0/payload/liquid-dialogs.module.b64"
-_DEX_SHA256 = "0b3c6d5634c6a7c32976fdec92eb67f5df63c47122b41d4ed8b01c391c3ee07b"
-_DEX_SIZE = 104972
+_DEX_PATH = "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/local.kyant_liquid_buttons/1.0/payload/ios-panels.module.b64"
+_DEX_SHA256 = "4dafbfef76a02c43323f1c5e18ffb55e090127cbed8f28e3d56b3d0e16a2dd4b"
+_DEX_SIZE = 111900
 _DEX_CLASS = "glassify.kyant.LiquidButtonsEntry"
 _handle = None
 

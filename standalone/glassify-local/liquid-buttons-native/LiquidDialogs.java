@@ -12,24 +12,34 @@ import android.graphics.Paint;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.RectF;
+import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
+import android.util.TypedValue;
 import android.view.Display;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
 import android.view.inspector.WindowInspector;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.WeakHashMap;
 
 final class LiquidDialogs {
     private static final String UI = "org.telegram.ui.ActionBar.";
     private static final String FLAGS = "kyant.dialog.nativeFlags";
+    private static final int[] ROLES = {DialogInterface.BUTTON_POSITIVE, DialogInterface.BUTTON_NEGATIVE,
+            DialogInterface.BUTTON_NEUTRAL, -4};
     private static final WeakHashMap<View, Panel> panels = new WeakHashMap<>();
 
     private static Field style, backgroundColor, topView, omitTopBackground, nativeBlur, drawBackground, customDim;
+    private static Field customWidth, customView, items, bottomView, starsBalance, rows, vertical, titleView, messageView;
+    private static Field[] actionLabels, headerAssets;
     private static Method getContainer, getButton, findActivity;
 
     static void install(ClassLoader loader) throws ReflectiveOperationException {
@@ -42,15 +52,50 @@ final class LiquidDialogs {
         nativeBlur = ReleaseButtons.field(type, "blurredNativeBackground");
         drawBackground = ReleaseButtons.field(type, "drawBackground");
         customDim = ReleaseButtons.field(type, "dimCustom");
+        customWidth = ReleaseButtons.field(type, "customWidth");
+        customView = ReleaseButtons.field(type, "customView");
+        items = ReleaseButtons.field(type, "items");
+        bottomView = ReleaseButtons.field(type, "bottomView");
+        starsBalance = ReleaseButtons.field(type, "needStarsBalance");
+        rows = ReleaseButtons.field(type, "buttonsLayout");
+        vertical = ReleaseButtons.field(type, "verticalButtons");
+        titleView = ReleaseButtons.field(type, "titleTextView");
+        messageView = ReleaseButtons.field(type, "messageTextView");
+        actionLabels = new Field[]{ReleaseButtons.field(type, "positiveButtonText"),
+                ReleaseButtons.field(type, "negativeButtonText"), ReleaseButtons.field(type, "neutralButtonText"),
+                ReleaseButtons.field(type, "negative2ButtonText")};
+        headerAssets = new Field[]{ReleaseButtons.field(type, "topResId"),
+                ReleaseButtons.field(type, "topAnimationId"), ReleaseButtons.field(type, "topDrawable")};
         getContainer = type.getMethod("getContainerView");
         getButton = type.getMethod("getButton", int.class);
         findActivity = loader.loadClass("org.telegram.messenger.AndroidUtilities")
                 .getMethod("findActivity", Context.class);
 
         ReleaseButtons.installDialogActionMotion(loader.loadClass(UI + "TextViewWithLoading"));
-        ReleaseButtons.hook(type, "inflateContent", new ReleaseButtons.UiHook() {
+        ReleaseButtons.hook(type, "getDialogWidth", new ReleaseButtons.UiHook() {
             @Override void after(MethodHookParam p) throws ReflectiveOperationException {
-                if (!p.hasThrowable()) prepare((Dialog) p.thisObject);
+                Dialog dialog = (Dialog) p.thisObject;
+                if (p.hasThrowable() || !plainAlert(dialog) || !ReleaseButtons.glassActive()) return;
+                View view = (View) getContainer.invoke(dialog);
+                if (view == null) return;
+                int padding = view.getPaddingLeft() + view.getPaddingRight();
+                p.setResult(Math.min((int) p.getResult(), px(dialog, 300) + padding));
+            }
+        });
+        ReleaseButtons.hook(type, "inflateContent", new ReleaseButtons.UiHook() {
+            @Override void before(MethodHookParam p) throws ReflectiveOperationException {
+                Dialog dialog = (Dialog) p.thisObject;
+                if (plainAlert(dialog) && ReleaseButtons.glassActive() && stackActions(dialog)) {
+                    p.setObjectExtra(FLAGS, vertical.getBoolean(dialog));
+                    vertical.setBoolean(dialog, true);
+                }
+            }
+            @Override void after(MethodHookParam p) throws ReflectiveOperationException {
+                try {
+                    if (!p.hasThrowable()) prepare((Dialog) p.thisObject);
+                } finally {
+                    if (p.getObjectExtra(FLAGS) instanceof Boolean prior) vertical.setBoolean(p.thisObject, prior);
+                }
             }
         }, boolean.class);
         ReleaseButtons.hook(type, "show", new ReleaseButtons.UiHook() {
@@ -105,10 +150,48 @@ final class LiquidDialogs {
         panels.put(view, panel);
         setBackground(view, panel);
         panel.applyDim();
-        for (int role : new int[]{DialogInterface.BUTTON_POSITIVE, DialogInterface.BUTTON_NEGATIVE,
-                DialogInterface.BUTTON_NEUTRAL, -4}) {
-            ReleaseButtons.bindDialogAction((View) getButton.invoke(dialog, role), role == DialogInterface.BUTTON_POSITIVE);
+        boolean dark = Color.luminance(backgroundColor.getInt(dialog) | 0xFF000000) < .30f;
+        for (int role : ROLES) {
+            if (getButton.invoke(dialog, role) instanceof View action) {
+                panel.actions.add(new ActionStyle(action));
+                ReleaseButtons.bindDialogAction(action, role == DialogInterface.BUTTON_POSITIVE, dark);
+            }
         }
+        if (plainAlert(dialog)) panel.configureLayout(dialog);
+    }
+
+    private static int px(Dialog dialog, float dp) {
+        return Math.round(dp * dialog.getContext().getResources().getDisplayMetrics().density);
+    }
+
+    private static boolean plainAlert(Dialog dialog) throws IllegalAccessException {
+        if (style.getInt(dialog) != 0 || customWidth.getInt(dialog) > 0 || customView.get(dialog) != null
+                || items.get(dialog) != null || bottomView.get(dialog) != null || topView.get(dialog) != null
+                || starsBalance.getBoolean(dialog)) return false;
+        for (Field asset : headerAssets) {
+            Object value = asset.get(dialog);
+            if (value != null && (!(value instanceof Integer resource) || resource != 0)) return false;
+        }
+        return true;
+    }
+
+    private static boolean stackActions(Dialog dialog) throws IllegalAccessException {
+        Paint measure = new Paint(Paint.ANTI_ALIAS_FLAG);
+        measure.setTypeface(Typeface.DEFAULT_BOLD);
+        measure.setTextSize(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, 16,
+                dialog.getContext().getResources().getDisplayMetrics()));
+        int viewport = dialog.getContext().getResources().getDisplayMetrics().widthPixels;
+        int bodyWidth = Math.min(px(dialog, 300), viewport - px(dialog, 56));
+        int half = Math.max(1, (bodyWidth - px(dialog, 40)) / 2);
+        int count = 0;
+        boolean longLabel = false;
+        for (Field label : actionLabels) {
+            if (label.get(dialog) instanceof CharSequence text) {
+                count++;
+                if (measure.measureText(text, 0, text.length()) + px(dialog, 24) > half) longLabel = true;
+            }
+        }
+        return count == 1 || count > 2 || longLabel;
     }
 
     private static Snapshot capture(Dialog dialog) throws ReflectiveOperationException {
@@ -178,11 +261,35 @@ final class LiquidDialogs {
     private record Snapshot(Bitmap bitmap, int x, int y, int width, int height) {}
     private record NativeFlags(Dialog dialog, boolean blur, boolean background) {}
 
+    private static final class ActionStyle {
+        final WeakReference<View> view;
+        final int width, height;
+        ActionStyle(View view) {
+            this.view = new WeakReference<>(view);
+            width = view.getLayoutParams().width;
+            height = view.getLayoutParams().height;
+        }
+        void restore() {
+            View action = view.get();
+            if (action == null) return;
+            action.getLayoutParams().width = width;
+            action.getLayoutParams().height = height;
+            action.requestLayout();
+            ReleaseButtons.unbindDialogAction(action);
+        }
+    }
+
     private static final class Panel extends Drawable implements GlassSurface.Backdrop {
         final WeakReference<Dialog> dialog;
         final WeakReference<View> view;
         final Drawable stock;
-        final GlassSurface surface = new GlassSurface(.52f, 2);
+        final GlassSurface surface = new GlassSurface(.22f, 2);
+        final ArrayList<ActionStyle> actions = new ArrayList<>();
+        WeakReference<ViewGroup> row;
+        int rowHeight;
+        final Rect rowPadding = new Rect();
+        WeakReference<TextView> title, message;
+        float titleSize, messageSize;
         final RectF bounds = new RectF(), imageBounds = new RectF();
         final Paint imagePaint = new Paint(Paint.FILTER_BITMAP_FLAG);
         final float[] corners = new float[8];
@@ -200,6 +307,38 @@ final class LiquidDialogs {
             this.view = new WeakReference<>(view);
             this.stock = view.getBackground();
             this.snapshot = snapshot;
+        }
+
+        void configureLayout(Dialog dialog) throws IllegalAccessException {
+            if (titleView.get(dialog) instanceof TextView text) {
+                title = new WeakReference<>(text);
+                titleSize = text.getTextSize();
+                text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 17);
+            }
+            if (messageView.get(dialog) instanceof TextView text) {
+                message = new WeakReference<>(text);
+                messageSize = text.getTextSize();
+                text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+            }
+            if (!(rows.get(dialog) instanceof ViewGroup group) || actions.isEmpty()) return;
+            row = new WeakReference<>(group);
+            rowHeight = group.getLayoutParams().height;
+            rowPadding.set(group.getPaddingLeft(), group.getPaddingTop(), group.getPaddingRight(), group.getPaddingBottom());
+            boolean stacked = group instanceof LinearLayout;
+            int viewport = dialog.getContext().getResources().getDisplayMetrics().widthPixels;
+            int bodyWidth = Math.min(px(dialog, 300), viewport - px(dialog, 56));
+            int side = px(dialog, 16);
+            int half = Math.max(1, (bodyWidth - side * 2 - px(dialog, 8)) / 2);
+            group.setPadding(side, px(dialog, 4), side, side);
+            group.getLayoutParams().height = stacked ? ViewGroup.LayoutParams.WRAP_CONTENT : px(dialog, 68);
+            for (ActionStyle entry : actions) {
+                View action = entry.view.get();
+                if (action == null) continue;
+                action.getLayoutParams().height = px(dialog, 48);
+                if (!stacked && actions.size() == 2) action.getLayoutParams().width = half;
+                action.requestLayout();
+            }
+            group.requestLayout();
         }
 
         @Override public void draw(Canvas canvas) {
@@ -238,10 +377,10 @@ final class LiquidDialogs {
             if (optics == null || strength != currentStrength || dark != darkTheme) {
                 strength = currentStrength;
                 dark = darkTheme;
-                float scale = .60f + .80f * strength / 100f;
-                optics = new GlassSurface.Optics((dark ? 8 : 16) * scale, 24 * scale, 48 * scale, 0);
+                float scale = .80f + .40f * strength / 100f;
+                optics = new GlassSurface.Optics((dark ? 28 : 30) * scale, 10 * scale, 7 * scale, 0);
             }
-            float radius = Math.min(48 * dp, Math.min(bounds.width(), bounds.height()) / 2f);
+            float radius = Math.min(35 * dp, Math.min(bounds.width(), bounds.height()) / 2f);
             for (int i = 0; i < corners.length; i++) corners[i] = radius;
             owner.getLocationOnScreen(location);
             if (snapshot != null) {
@@ -251,7 +390,7 @@ final class LiquidDialogs {
                     snapshotToken = new Object();
                 }
             }
-            int tint = (color & 0x00FFFFFF) | (dark ? 0x66000000 : 0x99000000);
+            int tint = (color & 0x00FFFFFF) | (dark ? 0xD9000000 : 0xC4000000);
             surface.draw(canvas, bounds, dp, snapshot == null ? null : this, color, tint, corners,
                     optics, 0, bounds.centerX(), bounds.centerY(), dark, true, true);
         }
@@ -272,7 +411,7 @@ final class LiquidDialogs {
             try {
                 if (customDim.getBoolean(owner)) return;
                 originalDim = params.dimAmount;
-                appliedDim = Color.luminance(backgroundColor.getInt(owner) | 0xFF000000) < .30f ? .56f : .23f;
+                appliedDim = .20f;
                 window.setDimAmount(appliedDim);
             } catch (IllegalAccessException error) {
                 originalDim = -1;
@@ -290,6 +429,18 @@ final class LiquidDialogs {
 
         void restore(View owner) {
             restoreDim();
+            ViewGroup group = row == null ? null : row.get();
+            if (group != null) {
+                group.getLayoutParams().height = rowHeight;
+                group.setPadding(rowPadding.left, rowPadding.top, rowPadding.right, rowPadding.bottom);
+                group.requestLayout();
+            }
+            TextView titleText = title == null ? null : title.get();
+            TextView messageText = message == null ? null : message.get();
+            if (titleText != null) titleText.setTextSize(TypedValue.COMPLEX_UNIT_PX, titleSize);
+            if (messageText != null) messageText.setTextSize(TypedValue.COMPLEX_UNIT_PX, messageSize);
+            actions.forEach(ActionStyle::restore);
+            actions.clear();
             if (owner.getBackground() == this) setBackground(owner, stock);
             snapshot = null;
             snapshotToken = null;
