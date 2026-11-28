@@ -72,6 +72,29 @@
       "commit": "7df185c3c9c03b3f65ec03d17d14a4ef338a4199",
       "blob_sha": "0089467a102eb4fc5273b48b9685d59285c12f48",
       "avatar_emoji_id": "5458813127233642984"
+    },
+    {
+      "id": "ios_profile_glass",
+      "name": "iOS Profile V2",
+      "description": "Оригинальный движок iOS Profile V2: стекло, цвет аватарки, круглые кнопки, подарки и реакция на музыку.",
+      "version": "1.0",
+      "api": 5,
+      "min_glassify": "0.6.0-beta.32",
+      "min_exteragram": "13.2.2",
+      "author": "@nufxa",
+      "detail_layout": "sections",
+      "avatar_emoji_id": "5472367477084134145",
+      "section_icons": {
+        "general": "msg_settings",
+        "appearance": "msg_customize",
+        "gifts": "msg_gift_premium",
+        "music": "msg_music",
+        "author": "msg_contacts"
+      },
+      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_profile_glass/1.0/extension.py",
+      "sha256": "da712d6f494def056e3e3b0f061e0a89bc27f2b488bd78a63d56f1c0dcf2aa95",
+      "commit": "ed812df73ac1a82ca0e3bb3c4e6d1df8b4650d5f",
+      "blob_sha": "b1fcb69fa6dfd6969eb03c9743794257a54e0813"
     }
   ]
 }
