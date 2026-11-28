@@ -10,7 +10,7 @@ GLASSIFY_EXTENSION = {'id': 'ios_profile_glass',
  'author_url': 'https://t.me/nufxa',
  'version': '1.0',
  'api': 5,
- 'min_glassify': '0.6.0-beta.32',
+ 'min_glassify': '0.6.0',
  'min_exteragram': '13.2.2'}
 
 ENGINE_VERSION = "7.13.0"
