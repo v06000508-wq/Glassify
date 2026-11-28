@@ -59,14 +59,15 @@ jobs:
                   blob = subprocess.check_output(['git', 'rev-parse', f'HEAD:{archived.as_posix()}'], text=True).strip()
                   assert blob == ext['blob_sha'], f'changed blob for {extension_id}'
                   prefix = 'https://raw.githubusercontent.com/v06000508-wq/Glassify/main/'
-                  for key in ('preview', 'preview_v2'):
-                      preview = ext.get(key)
-                      if preview:
-                          name = Path(urlparse(preview['file']).path).name
-                          assert re.fullmatch(r'preview\.(?:png|jpe?g|webp)', name, re.IGNORECASE), f'invalid preview name for {extension_id}'
-                          preview_path = archived.with_name(name)
-                          assert hashlib.sha256(preview_path.read_bytes()).hexdigest() == preview['sha256'], f'changed preview for {extension_id}'
-                          preview['file'] = prefix + preview_path.as_posix()
+                  for key in ('preview', 'preview_v2', 'avatar'):
+                      image = ext.get(key)
+                      if image:
+                          name = Path(urlparse(image['file']).path).name
+                          stem = 'avatar' if key == 'avatar' else 'preview'
+                          assert re.fullmatch(fr'{stem}\.(?:png|jpe?g|webp)', name, re.IGNORECASE), f'invalid {key} name for {extension_id}'
+                          image_path = archived.with_name(name)
+                          assert hashlib.sha256(image_path.read_bytes()).hexdigest() == image['sha256'], f'changed {key} for {extension_id}'
+                          image['file'] = prefix + image_path.as_posix()
                   ext['file'] = prefix + archived.as_posix()
                   ext['commit'] = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
                   changed = True

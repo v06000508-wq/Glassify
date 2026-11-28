@@ -49,6 +49,8 @@ def on_unload(api):
 
 Glassify verifies each downloaded extension against the SHA-256 hash declared in `catalog.json`. Installed code is also tied to the declared Git blob. Optional previews are declared with `file` and `sha256`, verified before display, and cached locally.
 
+Glassify 0.6.0-beta.22 and later also accept an optional `avatar` object with `file` and `sha256`. Place `avatar.png`, `avatar.jpg`, or `avatar.webp` (up to 256 KiB) beside the extension source. The archive workflow moves its catalog URL along with the preview. Imported `.py` extensions can provide a Base64 raster image in `GLASSIFY_EXTENSION["avatar_base64"]` using at most 48 KiB of Base64 text and an image no larger than 1024 × 1024 pixels.
+
 ## Available extensions
 
 - `ios_header` 1.2 — compact iOS-style chat header with native Liquid Glass, centered title/subtitle handling, avatar-aware layout and full stock-state restoration when disabled. Requires Glassify 0.2.1+ and exteraGram 12.9.0+.
