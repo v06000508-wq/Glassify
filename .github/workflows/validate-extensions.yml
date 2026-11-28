@@ -5,13 +5,17 @@ on:
     paths:
       - 'catalog.json'
       - 'extensions/**'
+      - 'archive/**'
       - '.github/workflows/validate-extensions.yml'
+      - '.github/workflows/sync-extension-hashes.yml'
   push:
     branches: [main]
     paths:
       - 'catalog.json'
       - 'extensions/**'
+      - 'archive/**'
       - '.github/workflows/validate-extensions.yml'
+      - '.github/workflows/sync-extension-hashes.yml'
   workflow_dispatch:
 
 permissions:
@@ -59,6 +63,7 @@ jobs:
               owner, repo, ref = parts[:3]
               assert owner == 'v06000508-wq' and repo == 'Glassify', f'foreign repository: {raw_url}'
               assert ref == 'main', f'catalog URL must point to main: {raw_url}'
+              assert not parsed.query and not parsed.fragment, f'invalid catalog URL: {raw_url}'
               return Path(*parts[3:])
 
           def sha256(path):
@@ -73,7 +78,18 @@ jobs:
               assert version_tuple(ext['min_glassify']) >= (0, 2, 0), f'{ext_id} must require Glassify 0.2.0+'
               assert int(ext['api']) in (1, 2, 3, 4), f'unsupported API for {ext_id}'
 
-              path = local_path(ext['file'])
+              pinned_path = local_path(ext['file'])
+              assert pinned_path in (
+                  ROOT / 'extensions' / ext_id / str(ext['version']) / 'extension.py',
+                  ROOT / 'archive' / ext_id / str(ext['version']) / 'extension.py',
+              ), f'invalid source path for {ext_id}: {pinned_path}'
+              active_dir = ROOT / 'extensions' / ext_id
+              archive_dir = ROOT / 'archive' / ext_id
+              assert not (active_dir.exists() and archive_dir.exists()), f'move the entire directory for {ext_id}'
+              path = pinned_path
+              if pinned_path.parts[0] == 'extensions' and not active_dir.exists() and archive_dir.is_dir():
+                  # The sync workflow rewrites the catalog after the move reaches main.
+                  path = ROOT / 'archive' / Path(*pinned_path.parts[1:])
               assert path.is_file(), f'missing extension file: {path}'
               expected_sha = ext['sha256']
               assert sha_re.fullmatch(expected_sha), f'invalid sha256 for {ext_id}'
@@ -100,12 +116,17 @@ jobs:
               assert blob_re.fullmatch(commit), f'invalid commit for {ext_id}'
               current_blob = subprocess.check_output(['git', 'hash-object', str(path)], text=True).strip()
               assert current_blob == blob_sha, f'blob_sha mismatch for {ext_id}'
-              committed = subprocess.check_output(['git', 'ls-tree', commit, '--', str(path)], text=True).strip().split()
+              committed = subprocess.check_output(['git', 'ls-tree', commit, '--', str(pinned_path)], text=True).strip().split()
               assert len(committed) >= 3 and committed[2] == blob_sha, f'pinned commit/blob mismatch for {ext_id}'
 
-              preview = ext.get('preview')
-              if preview:
-                  preview_path = local_path(preview['file'])
+              for key in ('preview', 'preview_v2'):
+                  preview = ext.get(key)
+                  if not preview:
+                      continue
+                  preview_url_path = local_path(preview['file'])
+                  assert preview_url_path.parent == pinned_path.parent, f'invalid preview path for {ext_id}'
+                  assert re.fullmatch(r'preview\.(?:png|jpe?g|webp)', preview_url_path.name, re.IGNORECASE), f'invalid preview name for {ext_id}'
+                  preview_path = path.with_name(preview_url_path.name)
                   assert preview_path.is_file(), f'missing preview: {preview_path}'
                   assert sha_re.fullmatch(preview['sha256']), f'invalid preview sha256 for {ext_id}'
                   assert sha256(preview_path) == preview['sha256'], f'preview SHA-256 mismatch for {ext_id}'
