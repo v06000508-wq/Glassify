@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'extensions/**'
+      - 'archive/**'
   workflow_dispatch:
 
 permissions:
@@ -16,11 +17,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Recalculate SHA-256 values
+      - name: Sync extension hashes and archive moves
         shell: python
         run: |
           import hashlib
           import json
+          import re
+          import subprocess
           from pathlib import Path
           from urllib.parse import urlparse
 
@@ -41,7 +44,33 @@ jobs:
                   continue
 
               path = Path(rel)
+              extension_id = str(ext['id'])
+              version = str(ext['version'])
+              if not re.fullmatch(r'[a-z0-9_]{2,48}', extension_id) or not re.fullmatch(r'\d+\.\d+(?:\.\d+)?', version):
+                  continue
+              if path != Path('extensions', extension_id, version, 'extension.py'):
+                  continue
               if not path.is_file():
+                  archived = Path('archive', *path.parts[1:])
+                  if not archived.is_file():
+                      continue
+                  assert not Path('extensions', extension_id).exists(), f'move the entire directory for {extension_id}'
+                  assert hashlib.sha256(archived.read_bytes()).hexdigest() == ext['sha256'], f'changed source for {extension_id}'
+                  blob = subprocess.check_output(['git', 'rev-parse', f'HEAD:{archived.as_posix()}'], text=True).strip()
+                  assert blob == ext['blob_sha'], f'changed blob for {extension_id}'
+                  prefix = 'https://raw.githubusercontent.com/v06000508-wq/Glassify/main/'
+                  for key in ('preview', 'preview_v2'):
+                      preview = ext.get(key)
+                      if preview:
+                          name = Path(urlparse(preview['file']).path).name
+                          assert re.fullmatch(r'preview\.(?:png|jpe?g|webp)', name, re.IGNORECASE), f'invalid preview name for {extension_id}'
+                          preview_path = archived.with_name(name)
+                          assert hashlib.sha256(preview_path.read_bytes()).hexdigest() == preview['sha256'], f'changed preview for {extension_id}'
+                          preview['file'] = prefix + preview_path.as_posix()
+                  ext['file'] = prefix + archived.as_posix()
+                  ext['commit'] = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+                  changed = True
+                  print(f'Archived {extension_id} {version}')
                   continue
 
               digest = hashlib.sha256(path.read_bytes()).hexdigest()
@@ -65,5 +94,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add catalog.json
-          git commit -m "Sync extension SHA-256 hashes"
+          git commit -m "Sync extension hashes and archive moves"
           git push

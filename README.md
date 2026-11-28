@@ -13,7 +13,14 @@ extensions/
     <version>/
       extension.py
       preview.webp
+archive/
+  <extension_id>/
+    <version>/
+      extension.py
+      preview.webp
 ```
+
+Retired extensions live in [archive](archive/README.md). Move the entire extension directory there to keep its last published version downloadable from the Archive section in Glassify 0.6.0-beta.21 and later.
 
 ## Version format
 
