@@ -5,20 +5,17 @@
     {
       "id": "ios_header",
       "name": "iOS Header",
-      "description": "Компактная iOS-шапка с настройками размера и прокрутки имени, плавным затуханием длинных заголовков и Glass Header Morph.",
-      "version": "1.4",
-      "api": 3,
-      "min_glassify": "0.5.0",
+      "description": "iOS-компоновка заголовка: капсула 44 dp, адаптивная ширина, статическое сокращение имени, сохранение значков, профиль и счётчик.",
+      "version": "1.5",
+      "api": 5,
+      "min_glassify": "0.6.0",
       "min_exteragram": "13.1.1",
-      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_header/1.4/extension.py",
-      "preview": {
-        "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_header/1.4/preview.webp",
-        "sha256": "e0f4084eb5683093121a5bc07956ed9001c9f15c026e13473fa40b24940bacf7"
-      },
-      "sha256": "5fc42e3e8b0c61462d52148a7141f2c3661d555b8323083934087477dab1ac42",
-      "commit": "d9a13b9f9d124c384554fc4424bca97c5f4471ee",
-      "blob_sha": "d7ea9662305663dc7c93cf01f52f0dec79532644",
-      "avatar_emoji_id": "5458790252237823529"
+      "file": "https://raw.githubusercontent.com/v06000508-wq/Glassify/main/extensions/ios_header/1.5/extension.py",
+      "sha256": "761c99a7cd0c454ab3cc763124aa5da579d875d8c7ac2dfa15fcc2aa668ec0c5",
+      "commit": "955fa75f21fa9bf162d1775288e0b629d0007d33",
+      "blob_sha": "6d17d7b95ca0817e890229bd9c1597866ecee18b",
+      "avatar_emoji_id": "5458790252237823529",
+      "detail_layout": "sections"
     },
     {
       "id": "liquidglass_plus",
