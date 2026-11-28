@@ -1,41 +1,116 @@
-# Glassify Extensions
+<div align="center">
 
-Remote extension catalog for Glassify 0.2.1+.
+# Glassify
 
-This repository stores optional Glassify extensions separately from the main exteraGram plugin. The extension system is disabled by default. The catalog is refreshed only after the user explicitly enables extensions, and extension code is downloaded only after the user presses Install. Newly installed extensions remain disabled until the user enables them manually.
+**Liquid Glass для exteraGram**
 
-## Repository layout
+Каталог расширений · Нативные эффекты · Extension API
+
+[![Core baseline](https://img.shields.io/badge/Glassify-0.6.0-5686B8?style=flat-square)](plugins/)
+[![Extension API](https://img.shields.io/badge/Extension_API-5-5686B8?style=flat-square)](#extension-api)
+[![Catalog](https://img.shields.io/badge/Каталог-JSON-64748B?style=flat-square)](catalog.json)
+[![Validation](https://github.com/v06000508-wq/Glassify/actions/workflows/validate-extensions.yml/badge.svg)](https://github.com/v06000508-wq/Glassify/actions/workflows/validate-extensions.yml)
+
+[Расширения](#расширения) · [Установка](#установка) · [Для разработчиков](#для-разработчиков) · [Архив](#архив)
+
+*Optional extensions and native Liquid Glass effects for exteraGram on Android.*
+
+</div>
+
+---
+
+## О проекте
+
+**Glassify** — плагин для exteraGram, который расширяет нативное оформление Liquid Glass: регулирует интенсивность стекла, улучшает стеклянные панели и предоставляет отдельный каталог дополнительных модулей.
+
+Расширения устанавливаются независимо от основного плагина. Можно выбрать только нужные эффекты, настроить их и отключить в любой момент. Система расширений по умолчанию выключена.
+
+Документация описывает актуальный интерфейс **ветки 0.6.0 и Extension API 5**, включая изменения beta 33. Требования отдельных модулей указаны в каталоге. В папке [plugins/](plugins/) хранятся опубликованные в репозитории сборки; номер документируемой сборки не означает, что её файл уже загружен туда.
+
+## Расширения
+
+| Расширение | Версия | Возможности | Glassify | exteraGram | API |
+| :--- | :---: | :--- | :---: | :---: | :---: |
+| [**iOS Header**](extensions/ios_header/1.4/) | 1.4 | Компактная шапка чата, размер и прокрутка имени, плавное затухание, Glass Header Morph | 0.5.0+ | 13.1.1+ | 3 |
+| [**iOS Input**](extensions/ios_input/1.1/) | 1.1 | Панель ввода в стиле iOS на оригинальном DEX-модуле; объединённый проверяемый payload | 0.4.0+ | 12.9.0+ | 4 |
+| [**Glass Date Chips**](extensions/glass_date_chips/1.2/) | 1.2 | Стеклянные даты и разделитель непрочитанных, адаптивный контраст и плавная смена даты | 0.5.0+ | 12.10.6+ | 3 |
+| [**iOS Profile V2**](extensions/ios_profile_glass/1.0/) | 1.0 | Стеклянный профиль, цвета аватарки, круглые кнопки, подарки и реакция на музыку | 0.6.0+ | 13.2.2+ | 5 |
+
+<details>
+<summary><b>Подробнее об iOS Profile V2</b></summary>
+
+Оригинальный движок **7.13.0** автора [@nufxa](https://t.me/nufxa) адаптирован для Glassify Extension API 5. Версия адаптера — **1.0**; версия движка ведётся отдельно.
+
+Карточка расширения использует нативное оформление Telegram: анимированный эмодзи, подпись автора, четыре раздела настроек (Основные, Оформление, Подарки, Музыка) и кнопку перехода к профилю автора. Логотип и иконки разделов задаются через каталог.
+
+</details>
+
+Источник актуальных версий и требований — [catalog.json](catalog.json). Для новых возможностей API 5 необходима сборка Glassify, которая их реализует; одного номера минимальной версии недостаточно для старых бета-сборок. Для удалённой установки iOS Profile V2 рекомендуется beta 33 или более новая сборка с поддержкой его проверяемого DEX.
+
+## Установка
+
+1. Установите совместимую сборку Glassify в exteraGram и включите плагин.
+2. Откройте настройки **Glassify → Расширения** и включите систему расширений.
+3. Откройте **Каталог расширений**, при необходимости нажмите «Обновить каталог».
+4. Выберите модуль и нажмите «Установить».
+5. В разделе **Установленные** включите модуль и откройте его настройки.
+
+Новые расширения не активируются автоматически. Проверка каталога не означает установку обновлений. Если расширение требует более новой версии клиента или Glassify, сначала обновите соответствующее приложение или плагин.
+
+В поддерживаемых beta-сборках предусмотрен также импорт локальных файлов `.py`. Локальные расширения устанавливаются отдельно от каталожных. Для получения новых логотипов каталожных расширений достаточно обновить каталог.
+
+## Архив
+
+| Расширение | Последняя версия | Glassify | exteraGram |
+| :--- | :---: | :---: | :---: |
+| [LiquidGlass+](archive/liquidglass_plus/1.3/) | 1.3 | 0.2.1+ | 12.10.6+ |
+
+LiquidGlass+ предоставляет пять материалов Blur3 — Clear, Frosted, Crystal, Satin и Deep Glass — с настройками внутреннего свечения и глубины. Верхнее размытие шапки остаётся Frosted.
+
+Архивные модули больше не получают обновления через каталог. Их последние версии доступны в **Расширения → Архив** в Glassify 0.6.0-beta.21 и новее при соблюдении требований совместимости. Все ранее опубликованные файлы сохранены в [archive/](archive/).
+
+## Для разработчиков
+
+### Структура репозитория
 
 ```text
-catalog.json
-extensions/
-  <extension_id>/
-    <version>/
-      extension.py
-      preview.webp
-archive/
-  <extension_id>/
-    <version>/
-      extension.py
-      preview.webp
+Glassify/
+├── catalog.json              # Метаданные, версии, ссылки, хеши и оформление
+├── plugins/                  # Опубликованные сборки основного плагина
+│   └── <version>/
+│       └── glassify.plugin
+├── extensions/               # Активные расширения
+│   └── <id>/<version>/
+│       ├── extension.py
+│       ├── preview.webp      # Необязательное превью
+│       └── avatar.png        # Необязательный растровый логотип
+├── archive/                  # Снятые с поддержки расширения
+└── .github/workflows/        # Проверки и синхронизация каталога
 ```
 
-Retired extensions live in [archive](archive/README.md). Move the entire extension directory there to keep its last published version downloadable from the Archive section in Glassify 0.6.0-beta.21 and later.
+### Extension API
 
-## Version format
+| API | Возможности |
+| :---: | :--- |
+| 1 | Базовый контракт расширения, жизненный цикл, настройки, логирование |
+| 2 | Отслеживаемые вспомогательные UI-операции |
+| 3 | Нативные настройки, проверяемые профили материалов Blur3 |
+| 4 | Ограниченный загрузчик проверяемых удалённых DEX-модулей |
+| 5 | Декларативный UI, нативные View, отдельные разделы настроек, поддержка зарегистрированных DEX-движков |
 
-Glassify extensions use a two-part version format such as `1.0`, `1.1`, `2.0`.
+Расширение объявляет требуемую версию API, а не получает прямой доступ к объекту Glassify Core. Новые API следует использовать только в сборках, которые их поддерживают.
 
-## Extension contract
-
-Each extension exports metadata and optional lifecycle callbacks. Extensions declare the Glassify API version they require. API 2 adds tracked UI helpers; API 3 adds declarative native settings and validated Blur3 material profiles without exposing the core object:
+### Минимальное расширение
 
 ```python
 GLASSIFY_EXTENSION = {
     "id": "example",
     "name": "Example",
+    "description": "Пример расширения",
     "version": "1.0",
-    "api": 1,
+    "api": 5,
+    "min_glassify": "0.6.0",
+    "min_exteragram": "12.10.6",
 }
 
 
@@ -44,25 +119,120 @@ def on_load(api):
 
 
 def on_unload(api):
-    api.log("Example unloaded")
+    pass
 ```
 
-Glassify verifies each downloaded extension against the SHA-256 hash declared in `catalog.json`. Installed code is also tied to the declared Git blob. Optional previews are declared with `file` and `sha256`, verified before display, and cached locally.
+Настройки хранятся через `api.get_setting(key, default)` и `api.set_setting(key, value)`. Не меняйте ключи без необходимости: так сохраняются предпочтения пользователя при обновлении.
 
-Glassify 0.6.0-beta.22 and later also accept an optional `avatar` object with `file` and `sha256`. Place `avatar.png`, `avatar.jpg`, or `avatar.webp` (up to 256 KiB) beside the extension source. The archive workflow moves its catalog URL along with the preview. Imported `.py` extensions can provide a Base64 raster image in `GLASSIFY_EXTENSION["avatar_base64"]` using at most 48 KiB of Base64 text and an image no larger than 1024 × 1024 pixels.
+### Нативные разделы настроек
 
-## Available extensions
+API 5 позволяет выводить разделы непосредственно на карточке расширения, используя штатное оформление клиента:
 
-- `ios_header` 1.2 — compact iOS-style chat header with native Liquid Glass, centered title/subtitle handling, avatar-aware layout and full stock-state restoration when disabled. Requires Glassify 0.2.1+ and exteraGram 12.9.0+.
-- `liquidglass_plus` 1.3 — five Blur3 surface materials (`Clear`, `Frosted`, `Crystal`, `Satin`, `Deep Glass`) with adjustable inner glow and depth. The top chat-header blur remains Frosted and is not changed by the selected surface type. Requires Glassify 0.2.1+ and exteraGram 12.10.6+.
+```python
+def on_load(api):
+    api.register_settings_sections([
+        {
+            "id": "general",
+            "title": "Основные",
+            "items": [
+                {
+                    "type": "choice",
+                    "key": "enabled",
+                    "text": "Эффект",
+                    "default": "on",
+                    "options": [
+                        {"value": "off", "text": "Выключен"},
+                        {"value": "on", "text": "Включён"},
+                    ],
+                },
+            ],
+        },
+    ], on_setting_changed)
 
-## Security model
 
-- The extension system is disabled by default.
-- No catalog network request is started before the user enables extensions.
-- Extensions are never installed or enabled automatically.
-- Extension source code is downloaded only after the user presses Install.
-- Every downloaded extension must match the SHA-256 declared in the catalog.
-- Installed extension code is checked against its pinned Git blob before loading.
-- Installed extensions can be disabled or removed independently of Glassify Core.
-- CI validates catalog structure, extension syntax and local hashes before changes are merged.
+def on_setting_changed(key, value):
+    pass  # Примените новое значение к своему эффекту.
+```
+
+Поддерживаются типы `choice`, `action` и `divider`, от 1 до 8 разделов и до 64 элементов суммарно. Идентификаторы разделов и ключи настроек должны быть уникальными.
+
+Для более сложных интерфейсов предусмотрены `register_ui(title, schema, callback, page_id)` и `register_native_ui(title, factory, page_id)`. Используйте `ui_theme_color()` для цветов текущей темы и `ui_class()` для поддерживаемых нативных UI-классов.
+
+### Оформление через каталог
+
+Логотипы не нужно встраивать в код каталожного расширения. Пример фрагмента записи iOS Profile V2 в `catalog.json`:
+
+```json
+{
+  "avatar_emoji_id": "5472367477084134145",
+  "detail_layout": "sections",
+  "author": "@nufxa",
+  "section_icons": {
+    "general": "msg_settings",
+    "appearance": "msg_customize",
+    "gifts": "msg_gift_premium",
+    "music": "msg_music",
+    "author": "msg_contacts"
+  }
+}
+```
+
+| Поле | Назначение |
+| :--- | :--- |
+| `avatar_emoji_id` | ID документа Telegram custom emoji, строка с положительным 64-битным числом. Отображается без дополнительной фоновой плашки в поддерживаемых сборках. |
+| `detail_layout` | Значение `sections` включает новый вид карточки. |
+| `author` | Публичный username автора; для допустимого username создаётся кнопка открытия профиля Telegram. |
+| `section_icons` | Имена drawable-ресурсов Telegram по ID разделов; `author` задаёт иконку кнопки автора. При недоступной иконке используется резервная. |
+| `avatar`, `preview` | Необязательные объекты с URL `file` и хешем `sha256`. |
+
+Эмодзи-логотипы каталога появились в beta 28, прозрачное отображение — в beta 29, управление иконками разделов из каталога — в beta 32. Для изменения исключительно оформления отредактируйте `catalog.json`: версия расширения и контрольные суммы его исходного файла остаются прежними. Пользователь увидит новые ресурсы после обновления каталога в поддерживаемой сборке.
+
+Растровый аватар может быть PNG, JPEG или WebP размером до 256 КиБ. Для локального импорта допускается `avatar_base64` в метаданных: до 48 КиБ Base64-текста и изображение не более 1024 × 1024 пикселей.
+
+### Версии и совместимость
+
+Расширения обычно используют формат `1.0`, `1.1`, `2.0`; каталог также принимает трёхкомпонентные версии.
+
+В Glassify beta 33 минимальная стабильная версия трактуется как базовая числовая версия независимо от канала сборки:
+
+| Установлен Glassify | Требование | Совместимость по версии |
+| :--- | :--- | :---: |
+| 0.6.0-beta.33 | 0.6.0+ | Да |
+| 0.6.1-beta.1 | 0.6.1+ | Да |
+| 0.7.0-beta.1 | 0.6.0+ | Да |
+| 0.6.0-beta.33 | 0.6.1+ | Нет |
+
+В метаданных указывается `"min_glassify": "0.6.0"` — знак `+` добавляет интерфейс. Если требуется конкретная beta, её номер указывается явно. Версия API и требования exteraGram проверяются отдельно.
+
+### Публикация
+
+1. Создайте `extensions/<id>/<version>/extension.py`, объявите метаданные и проверьте синтаксис.
+2. При необходимости добавьте превью и растровый аватар.
+3. Зафиксируйте исходник в Git и внесите запись в [catalog.json](catalog.json): ID, имя, описание, версию, API, минимальные версии, URL файла, SHA-256, Git commit и blob SHA.
+4. Убедитесь, что все ссылки и хеши относятся к опубликованным файлам.
+5. Проверьте [GitHub Actions](https://github.com/v06000508-wq/Glassify/actions), затем обновите каталог в приложении и протестируйте установку, включение и отключение модуля.
+
+При обновлении исполняемого кода выпускайте новую версию. Изменения оформления каталога отдельной версии не требуют.
+
+Для архивации перенесите **всю папку** `extensions/<id>/` в `archive/<id>/`, не меняя содержимое файлов. Workflow синхронизирует пути и коммит с архивной копией. Одного поля `archived: true` недостаточно: Glassify определяет архив по расположению исходника.
+
+## Безопасность и проверка целостности
+
+- Система расширений выключена по умолчанию; каталог не запрашивается до её включения.
+- Загрузка и активация кода требуют явных действий пользователя.
+- Исходники каталога проверяются по SHA-256 и закреплённому Git blob; превью и растровые аватары имеют отдельные SHA-256.
+- DEX-загрузчики ограничены правилами разрешённых источников и проверками целостности. Для iOS Profile V2 проверяются также зарегистрированный движок и его payload.
+- Расширения можно отключать и удалять независимо от основного плагина.
+- Проверка хеша подтверждает целостность, но не заменяет аудит безопасности. Устанавливайте только доверенные расширения.
+
+В репозитории работают два GitHub Actions workflow: [валидация каталога и исходников](.github/workflows/validate-extensions.yml) и [синхронизация хешей и архивных путей](.github/workflows/sync-extension-hashes.yml). Проверка в CI не заменяет тестирование на реальном Android-клиенте.
+
+---
+
+<div align="center">
+
+**Glassify** · [@VladSamsung](https://t.me/VladSamsung)
+
+[Каталог](catalog.json) · [Сборки](plugins/) · [Архив](archive/) · [Issues](https://github.com/v06000508-wq/Glassify/issues)
+
+</div>
