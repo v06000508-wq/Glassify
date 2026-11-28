@@ -51,7 +51,8 @@
       },
       "sha256": "f5ac710001054e077febd68f3df1c5752df312d42ed9e2445eee7ed2dec8d3e9",
       "commit": "15604d204de474990eb89a6902d9fa3f1194f414",
-      "blob_sha": "3fb04808b6a3d9540e980924167561aada4d625b"
+      "blob_sha": "3fb04808b6a3d9540e980924167561aada4d625b",
+      "avatar_emoji_id": "5301254429528320094"
     },
     {
       "id": "ios_input",
