@@ -119,17 +119,20 @@ jobs:
               committed = subprocess.check_output(['git', 'ls-tree', commit, '--', str(pinned_path)], text=True).strip().split()
               assert len(committed) >= 3 and committed[2] == blob_sha, f'pinned commit/blob mismatch for {ext_id}'
 
-              for key in ('preview', 'preview_v2'):
-                  preview = ext.get(key)
-                  if not preview:
+              for key in ('preview', 'preview_v2', 'avatar'):
+                  image = ext.get(key)
+                  if not image:
                       continue
-                  preview_url_path = local_path(preview['file'])
-                  assert preview_url_path.parent == pinned_path.parent, f'invalid preview path for {ext_id}'
-                  assert re.fullmatch(r'preview\.(?:png|jpe?g|webp)', preview_url_path.name, re.IGNORECASE), f'invalid preview name for {ext_id}'
-                  preview_path = path.with_name(preview_url_path.name)
-                  assert preview_path.is_file(), f'missing preview: {preview_path}'
-                  assert sha_re.fullmatch(preview['sha256']), f'invalid preview sha256 for {ext_id}'
-                  assert sha256(preview_path) == preview['sha256'], f'preview SHA-256 mismatch for {ext_id}'
+                  url_path = local_path(image['file'])
+                  assert url_path.parent == pinned_path.parent, f'invalid {key} path for {ext_id}'
+                  stem = 'avatar' if key == 'avatar' else 'preview'
+                  assert re.fullmatch(fr'{stem}\.(?:png|jpe?g|webp)', url_path.name, re.IGNORECASE), f'invalid {key} name for {ext_id}'
+                  image_path = path.with_name(url_path.name)
+                  assert image_path.is_file(), f'missing {key}: {image_path}'
+                  if key == 'avatar':
+                      assert 0 < image_path.stat().st_size <= 256 * 1024, f'invalid avatar size for {ext_id}'
+                  assert sha_re.fullmatch(image['sha256']), f'invalid {key} sha256 for {ext_id}'
+                  assert sha256(image_path) == image['sha256'], f'{key} SHA-256 mismatch for {ext_id}'
 
               print(f'OK: {ext_id} {ext["version"]} (API {ext["api"]})')
 
