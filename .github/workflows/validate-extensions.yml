@@ -52,7 +52,9 @@ jobs:
           blob_re = re.compile(r'^[0-9a-f]{40}$')
 
           def version_tuple(value):
-              return tuple(int(part) for part in str(value).split('.'))
+              match = re.fullmatch(r'(\d+\.\d+\.\d+)(?:-beta\.\d+)?', str(value))
+              assert match, f'invalid minimum Glassify version: {value}'
+              return tuple(int(part) for part in match.group(1).split('.'))
 
           def local_path(raw_url):
               parsed = urlparse(raw_url)
@@ -76,7 +78,15 @@ jobs:
               assert re.fullmatch(r'[a-z0-9_]{2,48}', ext_id), f'invalid extension id: {ext_id}'
               assert version_re.fullmatch(str(ext['version'])), f'invalid version for {ext_id}'
               assert version_tuple(ext['min_glassify']) >= (0, 2, 0), f'{ext_id} must require Glassify 0.2.0+'
-              assert int(ext['api']) in (1, 2, 3, 4), f'unsupported API for {ext_id}'
+              assert int(ext['api']) in (1, 2, 3, 4, 5), f'unsupported API for {ext_id}'
+              if 'avatar_emoji_id' in ext:
+                  emoji = ext['avatar_emoji_id']
+                  assert isinstance(emoji, str) and re.fullmatch(r'[1-9][0-9]{0,18}', emoji) and int(emoji) <= 9223372036854775807, f'invalid emoji ID for {ext_id}'
+              if 'section_icons' in ext:
+                  icons = ext['section_icons']
+                  assert ext.get('detail_layout') == 'sections' and int(ext['api']) >= 5, f'icons require sections for {ext_id}'
+                  assert isinstance(icons, dict) and len(icons) <= 16, f'invalid section icons for {ext_id}'
+                  assert all(re.fullmatch(r'[a-z][a-z0-9_.-]{0,47}', k) and isinstance(v, str) and re.fullmatch(r'[a-z][a-z0-9_]{0,63}', v) for k,v in icons.items()), f'invalid icon names for {ext_id}'
 
               pinned_path = local_path(ext['file'])
               assert pinned_path in (
